@@ -227,8 +227,7 @@ For skewness, a cutoff of `r skewCuts[1]` accepted only `r cutCompare$skewPassed
 and the smallest cutoff I tried that accepted all of them was `r skewFloor`. For kurtosis the smallest such cutoff was
 `r kurtFloor`, and for the SE check it was `r seFloor * 100` percent.
 
-I did not pick those smallest values. They only just pass on this seed, and with a different seed the noise could
-push a truly normal distribution over them. I chose skewness `r criteria$skew`, kurtosis `r criteria$kurt` and
+I did not pick those smallest values. They are the smallest values that passed on this seed, and with a different seed the noise could push a truly normal distribution over them. I chose skewness `r criteria$skew`, kurtosis `r criteria$kurt` and
 SE tolerance `r seTol * 100` percent, which leave a clear margin above the noise
 (`r round(criteria$skew / skewFloor, 1)`, `r round(criteria$kurt / kurtFloor, 1)` and `r round(seTol / seFloor, 1)` times the smallest
 passing values). Whether these cutoffs are strict enough to catch a real departure from normality cannot be
