@@ -1,0 +1,325 @@
+---
+title: "CLT Experiment 1"
+subtitle: "Standard Normal Population"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+pop <- populations$normal
+```
+
+# 1. What population are you sampling from?
+
+I start with the standard normal population: mean 0, standard deviation 1, skewness 0 and excess kurtosis 0.
+I treat this as my control experiment. The mean of independent normal observations is exactly normal for every n,
+so I already know the right answer before simulating. Anything that looks "non normal" here can only come from
+Monte Carlo noise, which makes this the place to check that my standard for "normal enough" does not reject a
+distribution that is truly normal.
+
+```{r}
+#| label: population
+set.seed(student_id)
+popDraws <- pop$generator(100000)
+
+hist(popDraws, breaks = 60, probability = TRUE, col = "gray85", border = "white",
+     main = "Population: 100,000 draws from N(0, 1)", xlab = "Individual value")
+curve(dnorm(x), add = TRUE, col = "firebrick", lwd = 2)
+
+data.frame(
+  quantity    = c("mean", "sd", "skewness", "excess kurtosis"),
+  theoretical = c(pop$mu, pop$sigma, pop$gamma1, pop$gamma2),
+  simulated   = c(mean(popDraws), sd(popDraws), skewness(popDraws), exKurtosis(popDraws))
+)
+```
+
+The simulated population values match the theoretical ones closely, so the generator behaves as expected.
+
+The assignment uses N(0, 1), but I wanted to know whether the choice of mean and standard deviation matters for
+the shape results. I reran the full experiment with three other normal populations, using the same seed.
+
+```{r}
+#| label: meanSdCheck
+meanSd <- data.frame(mu = c(0, 100, -5, 0), sigma = c(1, 15, 0.1, 50))
+shapeRuns <- lapply(1:nrow(meanSd), function(i) {
+  p <- pop
+  m <- meanSd$mu[i]; s <- meanSd$sigma[i]
+  p$generator <- function(n) rnorm(n, mean = m, sd = s)
+  p$mu <- m; p$sigma <- s
+  analyzePopulation(p)$table
+})
+meanSd$chosenN <- sapply(shapeRuns, smallestN)
+meanSd$maxSkew <- sapply(shapeRuns, function(t) max(abs(t$skew)))
+meanSd$minQQ   <- sapply(shapeRuns, function(t) min(t$qqCor))
+meanSd$minSE   <- sapply(shapeRuns, function(t) min(t$seRatio))
+knitr::kable(meanSd, digits = 4)
+```
+
+Every row gives the same chosen n, skewness, QQ correlation and SE ratio. Shifting a normal distribution or
+stretching it changes where the sample means sit and how spread out they are, but not their shape, and my
+diagnostics only measure shape and the ratio to sigma / sqrt(n). So one experiment with N(0, 1) covers every
+normal population.
+
+# 2. What did you expect before running the simulation?
+
+For iid data the skewness of the sample mean is gamma1 / sqrt(n) and the excess kurtosis is gamma2 / n.
+Both are 0 here, and a sum of independent normal variables is itself normal, so I expected the sampling
+distribution to be normal already at n = 1.
+
+```{r}
+#| label: prediction
+predictedN(pop$gamma1)
+```
+
+Since the answer is known, the real question for this file is how much my diagnostics move by chance alone.
+With num repetitions, the skewness estimate from truly normal data has a standard error of about
+sqrt(6 / num) and the excess kurtosis about sqrt(24 / num). For the value I use in the main analysis
+(num = `r format(num, big.mark = ",")`):
+
+```{r}
+#| label: noise
+c(skewNoiseSE = sqrt(6 / num), kurtNoiseSE = sqrt(24 / num))
+```
+
+My cutoffs (|skewness| at most `r criteria$skew`, |excess kurtosis| at most `r criteria$kurt`) are about
+`r round(criteria$skew / sqrt(6 / num))` and `r round(criteria$kurt / sqrt(24 / num))` times larger than this noise,
+so I predicted that a truly normal sampling distribution would pass at every n.
+
+# 3. Which sample sizes did you investigate?
+
+## Choosing the number of repetitions (num)
+
+n and num are different things: n is the size of one sample, and num is how many samples I simulate to see the
+sampling distribution. Changing num does not change the true sampling distribution, only how precisely I can
+measure it. Before fixing num, I ran the whole normal experiment with four values. Since the population is exactly
+normal, every n should pass; any failure here would be caused by too few repetitions, not by the CLT.
+
+```{r}
+#| label: numCompare
+numValues <- c(100, 1000, 10000, 100000)
+numCompare <- do.call(rbind, lapply(numValues, function(k) {
+  seconds <- system.time(t <- analyzePopulation(pop, reps = k)$table)["elapsed"]
+  data.frame(num = k,
+             passed = sum(t$normalEnough), tested = nrow(t),
+             maxSkew = max(abs(t$skew)), maxKurt = max(abs(t$exKurt)),
+             minQQ = min(t$qqCor),
+             minSE = min(t$seRatio), maxSE = max(t$seRatio), seOK = sum(t$seOK),
+             skewNoise = sqrt(6 / k),
+             seconds = unname(seconds))
+}))
+knitr::kable(transform(numCompare, num = format(num, big.mark = ",", scientific = FALSE)), digits = 4)
+nc <- function(k, column) numCompare[numCompare$num == k, column]
+```
+
+To see what num changes, I drew the n = 30 sampling distribution from each run. These are the same simulated
+means that produced the n = 30 rows of the table above.
+
+```{r}
+#| label: numPlot
+#| fig.width: 11
+#| fig.height: 3.5
+numMeans <- lapply(numValues, function(k) {
+  set.seed(student_id)
+  simMeans(pop$generator, 30, reps = k)
+})
+old <- par(mfrow = c(1, length(numValues)), mar = c(4, 4, 3, 1))
+for (i in 1:length(numValues)) {
+  hist(numMeans[[i]], breaks = seq(-1, 1, by = 0.05), probability = TRUE, col = "gray85", border = "white",
+       xlim = c(-0.7, 0.7), ylim = c(0, 3),
+       main = paste("num =", format(numValues[i], big.mark = ",", scientific = FALSE)), xlab = "Sample mean (n = 30)")
+  curve(dnorm(x, mean = 0, sd = 1 / sqrt(30)), add = TRUE, col = "firebrick", lwd = 2)
+}
+par(old)
+```
+
+Putting the four runs on one plot makes the comparison easier. Each line connects the bar heights of a histogram
+with bins 0.1 wide.
+
+```{r}
+#| label: numOverlay
+#| fig.width: 9
+#| fig.height: 5
+numCols <- c("darkorange", "seagreen", "steelblue", "purple")
+numLty  <- c(1, 1, 1, 2)
+xs <- seq(-0.6, 0.6, length.out = 400)
+plot(xs, dnorm(xs, mean = 0, sd = 1 / sqrt(30)), type = "l", lwd = 3, col = "black",
+     ylim = c(0, 3), xlab = "Sample mean (n = 30)", ylab = "Density",
+     main = "Same n = 30, different num: how well the simulation traces the true curve")
+for (i in 1:length(numValues)) {
+  m <- numMeans[[i]]
+  h <- hist(m, breaks = seq(floor(min(m) * 10) / 10, ceiling(max(m) * 10) / 10, by = 0.1), plot = FALSE)
+  lines(h$mids, h$density, type = "o", pch = 16, col = numCols[i], lwd = 2, lty = numLty[i])
+}
+legend("topright",
+       c("True curve (theory)", paste("num =", trimws(format(numValues, big.mark = ",", scientific = FALSE)))),
+       col = c("black", numCols), lwd = c(3, 2, 2, 2, 2), lty = c(1, numLty), pch = c(NA, 16, 16, 16, 16), bty = "n")
+```
+
+The true curve (red in the panels, black in the combined plot) is the same for every num, because n did not change: the true sampling distribution of the mean
+of 30 normal values is always N(0, 1 / sqrt(30)). The only difference is how closely the bars trace that curve.
+With 100 means the bars are jagged and some bins are empty; with 100,000 they follow the curve almost exactly.
+
+With num = 100, `r nc(100, "passed")` of `r nc(100, "tested")` sample sizes passed my standard, even though the
+population is exactly normal. The skewness noise at num = 100 is about `r round(nc(100, "skewNoise"), 3)`, which is
+larger than my cutoff of `r criteria$skew`, so the measurement is too noisy for the standard I set.
+
+With num = 1,000, `r nc(1000, "passed")` of `r nc(1000, "tested")` passed, but the evidence is weaker than it looks: the
+largest |skewness| was `r round(nc(1000, "maxSkew"), 3)` (close to my cutoff of `r criteria$skew`), and the SE ratio ranged
+from `r round(nc(1000, "minSE"), 3)` to `r round(nc(1000, "maxSE"), 3)`, so only `r nc(1000, "seOK")` of `r nc(1000, "tested")` sample sizes passed
+my 5 percent SE check. That failure comes from noise in the simulated SD, not from the formula sigma / sqrt(n).
+
+With num = 10,000 the largest |skewness| dropped to `r round(nc(10000, "maxSkew"), 3)`, and with num = 100,000 to
+`r round(nc(100000, "maxSkew"), 3)`. Both pass every n and every SE check, so the extra precision of 100,000 does not
+change any decision, while it took about `r round(nc(100000, "seconds") / nc(10000, "seconds"))` times longer to run.
+
+I chose num = 10,000 for the main analysis: it is the smallest of the values I tried where my cutoffs sit well above
+the noise, and it keeps the rendering time short. (The seconds column depends on the computer and changes from run to run.)
+
+## Sample sizes
+
+I used the grid `r paste(pop$coarse, collapse = ", ")`. I included very small values (1, 2, 3) on purpose,
+because if the theory is right the small n cases should already look normal, and that is where a problem with my
+criteria would show up first. I did not expect to need a finer grid.
+
+```{r}
+#| label: simulate
+res <- analyzePopulation(pop)
+tab <- res$table
+nStar <- smallestN(tab)
+showTable(tab)
+```
+
+## Choosing my cutoffs
+
+My cutoffs also needed testing. A cutoff that is too strict will reject a truly normal distribution just because of
+Monte Carlo noise, so I tried several values for each check on the table above and counted how many of the
+`r nrow(tab)` sample sizes passed. Each column uses only that one check.
+
+```{r}
+#| label: cutoffCompare
+skewCuts <- c(0.01, 0.02, 0.05, 0.1, 0.2, 0.3)
+kurtCuts <- c(0.02, 0.05, 0.1, 0.2, 0.3, 0.5)
+seCuts   <- c(0.005, 0.01, 0.02, 0.03, 0.05, 0.1)
+cutCompare <- data.frame(
+  skewCut = skewCuts, skewPassed = sapply(skewCuts, function(k) sum(abs(tab$skew) <= k)),
+  kurtCut = kurtCuts, kurtPassed = sapply(kurtCuts, function(k) sum(abs(tab$exKurt) <= k)),
+  seTol   = seCuts,   sePassed   = sapply(seCuts,   function(k) sum(abs(tab$seRatio - 1) <= k))
+)
+knitr::kable(cutCompare)
+skewFloor <- min(skewCuts[cutCompare$skewPassed == nrow(tab)])
+kurtFloor <- min(kurtCuts[cutCompare$kurtPassed == nrow(tab)])
+seFloor   <- min(seCuts[cutCompare$sePassed == nrow(tab)])
+```
+
+For skewness, a cutoff of `r skewCuts[1]` accepted only `r cutCompare$skewPassed[1]` of `r nrow(tab)` sample sizes,
+and the smallest cutoff I tried that accepted all of them was `r skewFloor`. For kurtosis the smallest such cutoff was
+`r kurtFloor`, and for the SE check it was `r seFloor * 100` percent.
+
+I did not pick those smallest values. They only just pass on this seed, and with a different seed the noise could
+push a truly normal distribution over them. I chose skewness `r criteria$skew`, kurtosis `r criteria$kurt` and
+SE tolerance `r seTol * 100` percent, which leave a clear margin above the noise
+(`r round(criteria$skew / skewFloor, 1)`, `r round(criteria$kurt / kurtFloor, 1)` and `r round(seTol / seFloor, 1)` times the smallest
+passing values). Whether these cutoffs are strict enough to catch a real departure from normality cannot be
+tested here, because the normal population has none. I check that with the exponential population in 03exponential.qmd.
+
+```{r}
+#| label: summaryNumbers
+maxSkew   <- max(abs(tab$skew))
+maxKurt   <- max(abs(tab$exKurt))
+minQQ     <- min(tab$qqCor)
+seRange   <- range(tab$seRatio)
+tailRange <- range(c(tab$tailLow, tab$tailHigh))
+nReject   <- sum(tab$swP < 0.05)
+meanGapZ  <- abs(tab$simMean - tab$theoMean) / (tab$theoSE / sqrt(num))
+```
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+`r sum(tab$normalEnough)` of the `r nrow(tab)` sample sizes I tested met my standard.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+The CLT makes three claims about the sample mean: its center is mu, its spread is sigma / sqrt(n), and its shape becomes
+normal. This section checks the first two; section 6 checks the shape.
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+```{r}
+#| label: sePlot
+plotSE(tab, label = "Normal")
+```
+
+Center: the simulated mean of the sample means was never more than `r round(max(abs(tab$simMean - tab$theoMean)), 4)` away
+from mu = 0. The simulated mean itself has Monte Carlo error of about (theoretical SE) / sqrt(num), and the largest gap
+was `r round(max(meanGapZ), 2)` of those Monte Carlo standard errors, which is consistent with random noise.
+
+Spread: the simulated SD of the means divided by sigma / sqrt(n) stayed between `r round(seRange[1], 3)` and
+`r round(seRange[2], 3)`, and `r sum(tab$seOK)` of `r nrow(tab)` sample sizes passed my 5 percent SE check. On the log scale plot the
+simulated points sit on the theoretical line, which falls with slope minus one half: multiplying n by 4 halves the SE.
+
+# 6. Why did you choose that value?
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotSampling(res, nShow = c(1, 5, 30, 100), mu = pop$mu, theoSE = iidSE(pop$sigma), label = pop$label)
+```
+
+In every histogram the red curve (the CLT prediction) and the blue dashed curve (a normal curve with the simulated
+mean and SD) lie on top of each other and follow the bars. The QQ plots are straight lines from end to end, with no
+curve in the middle (which would mean skew) and no bending at the ends (which would mean heavy or light tails).
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Normal")
+```
+
+Unlike the other populations, there is no downward trend here: skewness and kurtosis just scatter around 0 at
+every n, which is what pure noise should look like.
+
+I chose n = `r nStar` because every piece of shape evidence agrees, starting at the smallest sample size I tested:
+
+* The largest |skewness| across all n was `r round(maxSkew, 3)` and the largest |excess kurtosis| was
+  `r round(maxKurt, 3)`. Both are within a few noise standard errors of 0 and below my cutoffs.
+* The QQ correlation never dropped below `r round(minQQ, 4)`, compared with my cutoff of `r criteria$qqCor`.
+* The share of sample means beyond ±1.96 standard deviations stayed between `r round(tailRange[1], 4)` and
+  `r round(tailRange[2], 4)` in each tail, close to the 0.025 a normal distribution gives.
+
+This result is mostly a check on my method. Since my standard accepts a distribution I know is normal at every n,
+I can trust that when it rejects another population later, the rejection reflects a real departure from normality
+and not just Monte Carlo noise.
+
+# 7. What surprised you?
+
+The biggest surprise was the num experiment in section 3. With num = 100, my standard rejected an exactly normal
+population at `r nc(100, "tested") - nc(100, "passed")` of `r nc(100, "tested")` sample sizes. Nothing about the population or the CLT changed
+between num = 100 and num = 10,000; only the number of simulated samples did. A "not normal" verdict can therefore be
+a statement about my simulation rather than about the data, which is why I fixed num before choosing any n.
+
+I also checked the Shapiro Wilk test, which I report but do not use for my decision:
+
+```{r}
+#| label: shapiroCheck
+tab[, c("n", "swW", "swP")]
+nReject
+```
+
+It gave p < 0.05 at `r nReject` of the `r nrow(tab)` sample sizes (smallest p value `r signif(min(tab$swP), 2)` at
+n = `r tab$n[which.min(tab$swP)]`). Because the population is exactly normal, any rejection here would be a false alarm;
+at the 5 percent level the test is expected to reject a true null about 1 time in 20. My rows are also not independent
+of each other (I reset the seed before each n, so they reuse the same random stream), so one unlucky stream could
+affect several rows at once.
