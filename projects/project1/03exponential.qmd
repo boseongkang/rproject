@@ -1,0 +1,398 @@
+---
+title: "CLT Experiment 3"
+subtitle: "Exponential Population"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+pop <- populations$exponential
+```
+
+# 1. What population are you sampling from?
+
+The exponential distribution with rate 1 models a waiting time, such as the time until the next customer arrives.
+Its mean and standard deviation are both 1. It is strongly right skewed (skewness 2), has a heavier right tail than a
+normal distribution (excess kurtosis 6), and can never be negative. This is the population where I expected the
+"n = 30" rule to be tested hardest among the iid populations with finite variance.
+
+To see how different this population is from the normal one I used as my control in 01normal.qmd, I drew both
+side by side. On the exponential panel I also drew a normal curve with the same mean and standard deviation (both 1).
+
+```{r}
+#| label: population
+#| fig.width: 11
+#| fig.height: 4.5
+set.seed(student_id)
+normalDraws <- populations$normal$generator(100000)
+set.seed(student_id)
+popDraws <- pop$generator(100000)
+
+old <- par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+hist(normalDraws, breaks = 60, probability = TRUE, col = "gray85", border = "white", xlim = c(-4, 4),
+     main = "Normal(0, 1) population (01normal)", xlab = "Individual value")
+curve(dnorm(x), add = TRUE, col = "firebrick", lwd = 2)
+
+hist(popDraws, breaks = 80, probability = TRUE, col = "gray85", border = "white", xlim = c(-2, 6),
+     main = "Exponential(1) population", xlab = "Individual value")
+curve(dexp(x, rate = 1), from = 0, add = TRUE, col = "firebrick", lwd = 2)
+curve(dnorm(x, mean = 1, sd = 1), add = TRUE, col = "steelblue", lwd = 2, lty = 2)
+legend("topright", c("Exponential(1) density", "Normal with mean 1, SD 1"),
+       col = c("firebrick", "steelblue"), lwd = 2, lty = c(1, 2), bty = "n")
+par(old)
+
+data.frame(
+  quantity    = c("mean", "sd", "skewness", "excess kurtosis"),
+  theoretical = c(pop$mu, pop$sigma, pop$gamma1, pop$gamma2),
+  simulated   = c(mean(popDraws), sd(popDraws), skewness(popDraws), exKurtosis(popDraws))
+)
+```
+
+The simulated values are close to the theoretical ones. Skewness and kurtosis are a little further off than the mean
+and SD, which makes sense: they depend on the rare large values in the right tail.
+
+The two populations on the right panel have the same mean and the same standard deviation, but very different shapes.
+The normal curve puts about `r round(100 * pnorm(0, mean = 1, sd = 1), 1)` percent of its values below 0, where the exponential has none, and
+the exponential has a long right tail that the normal curve does not. Since the CLT formula sigma / sqrt(n) only
+uses the mean and SD, it cannot see this difference; only the shape of the sampling distribution can.
+
+# 2. What did you expect before running the simulation?
+
+## The exponential formula
+
+The exponential distribution with rate lambda has density
+
+$$f(x) = \lambda e^{-\lambda x}, \qquad x \ge 0,$$
+
+with mean 1 / lambda, standard deviation 1 / lambda, skewness 2 and excess kurtosis 6. The density is highest at
+x = 0 and keeps falling as x grows. Lambda only sets the time scale: the skewness and kurtosis do not depend on it.
+To check this with numbers, I plugged lambda = 1, 10 and 100 into the formula and also simulated 100,000 values from each.
+
+```{r}
+#| label: lambdaPlot
+#| fig.width: 11
+#| fig.height: 3.8
+lambdas <- c(1, 10, 100)
+lamDraws <- lapply(lambdas, function(l) {
+  set.seed(student_id)
+  rexp(100000, rate = l)
+})
+old <- par(mfrow = c(1, length(lambdas)), mar = c(4, 4, 3, 1))
+for (i in 1:length(lambdas)) {
+  l <- lambdas[i]
+  hist(lamDraws[[i]][lamDraws[[i]] < 6 / l], breaks = 60, probability = TRUE, col = "gray85", border = "white",
+       xlim = c(0, 6 / l), main = paste("lambda =", l), xlab = "x")
+  curve(l * exp(-l * x), from = 0, to = 6 / l, n = 500, add = TRUE, col = "firebrick", lwd = 2)
+}
+par(old)
+
+data.frame(
+  lambda = lambdas,
+  mean = sapply(lamDraws, mean),
+  theoMean = 1 / lambdas,
+  sd = sapply(lamDraws, sd),
+  skewness = sapply(lamDraws, skewness),
+  exKurtosis = sapply(lamDraws, exKurtosis)
+)
+```
+
+The three panels look the same; only the numbers on the x axis change. The mean and SD shrink as 1 / lambda, but the
+simulated skewness and kurtosis are identical for all three. They match exactly because, with the same seed, R makes
+the draws for rate lambda by dividing the draws for rate 1 by lambda, and dividing by a constant does not change shape. So my results for lambda = 1 apply to every exponential
+population, the same way the results for N(0, 1) applied to every normal population in 01normal.qmd.
+
+## The right tail
+
+The skewness of 2 comes from the long right tail. To see how long it is, I compared the chance of a value larger
+than x for the exponential and for a normal distribution with the same mean and SD (both 1).
+
+```{r}
+#| label: tailCompare
+x <- 1:6
+tailCompare <- data.frame(
+  x = x,
+  exponential = 1 - pexp(x, rate = 1),
+  normal = 1 - pnorm(x, mean = 1, sd = 1)
+)
+tailCompare$ratio <- tailCompare$exponential / tailCompare$normal
+knitr::kable(signif(tailCompare, 3))
+```
+
+Up to x = 2 the two are similar, but beyond that the ratio grows very fast: the exponential is about
+`r round(tailCompare$ratio[x == 4])` times more likely than the normal to give a value above 4, and about
+`r format(round(tailCompare$ratio[x == 6]), big.mark = ",")` times more likely above 6. These rare large values pull a sample mean to the right, and a
+handful of them can do it even when n is moderate. That is why I expected the sample mean to stay right skewed
+for a long time.
+
+## My predictions
+
+I made four predictions before running anything.
+
+Center and spread: the mean of the sample means should be mu = 1 and their SD should be sigma / sqrt(n) = 1 / sqrt(n)
+at every n, including n = 1. These two results only need independence and a finite variance, not normality, so I
+did not expect the SE check to fail anywhere.
+
+Shape at small n: the sampling distribution should start out right skewed like the population, with a short left
+tail and a long right tail, and the QQ plot should bend upward at both ends.
+
+How fast the shape improves: for iid data the skewness of the sample mean is gamma1 / sqrt(n) = 2 / sqrt(n) and the
+excess kurtosis is gamma2 / n = 6 / n. My skewness cutoff is `r criteria$skew`, so the formula predicts I need
+
+```{r}
+#| label: prediction
+predictedN(pop$gamma1)
+iidPrediction(pop$gamma1, pop$gamma2)(30)
+```
+
+The kurtosis cutoff (`r criteria$kurt`) only needs 6 / n ≤ `r criteria$kurt`, which is n ≥ `r ceiling(pop$gamma2 / criteria$kurt)`, so I expected
+skewness to be the check that decides the answer. At the rule of thumb n = 30 the predicted skewness is still
+`r round(2 / sqrt(30), 3)`, almost twice my cutoff, so I expected n = 30 not to be enough. There is no simple formula for
+the QQ correlation, so that check I had to measure.
+
+Shapiro Wilk: with 5,000 values per test, I expected it to reject normality at almost every n, even after my
+own checks pass, because a test that large detects very small departures.
+
+# 3. Which sample sizes did you investigate?
+
+## Coarse grid, then a finer grid
+
+I started with a coarse grid: `r paste(pop$coarse, collapse = ", ")`. The values are spread out on a roughly log scale
+because the prediction (n near `r predictedN(pop$gamma1)`) is far from the small n values. After the coarse grid, my code finds
+the last n that failed and the first n that passed, and adds about 12 values between them.
+
+```{r}
+#| label: simulate
+res <- analyzePopulation(pop)
+tab <- res$table
+nStar <- smallestN(tab)
+added <- setdiff(tab$n, pop$coarse)
+showTable(tab)
+```
+
+The finer grid added `r paste(added, collapse = ", ")`.
+
+## Choosing my QQ cutoff
+
+On the normal population every QQ cutoff up to 0.9995 passed, so the normal file could not tell me which QQ cutoff
+to use. Here the QQ check matters, so I compared three values, keeping the skewness and kurtosis cutoffs the same.
+
+```{r}
+#| label: qqCompare
+qqValues <- c(0.995, 0.998, 0.999)
+qqCompare <- data.frame(
+  qqCut = qqValues,
+  chosenN = sapply(qqValues, function(q) {
+    crit <- criteria
+    crit$qqCor <- q
+    smallestN(tab, crit)
+  })
+)
+knitr::kable(qqCompare)
+row100 <- tab[tab$n == 100, ]
+```
+
+With 0.995 and 0.998 the answer is the same as with skewness alone, so the QQ check agrees with the skewness check.
+With 0.999 the answer moves to `r qqCompare$chosenN[qqValues == 0.999]`: at n = 100 the skewness was already
+`r round(row100$skew, 3)`, below my cutoff, but the QQ correlation was `r round(row100$qqCor, 4)`. A cutoff of 0.999 would
+let the QQ check overrule the skewness check on its own, so I kept 0.998, which keeps the two checks consistent.
+
+## How much does the answer depend on my skewness cutoff?
+
+My answer depends on my definition of "normal enough". To see how much, I ran a wider grid once and found the
+smallest n for several skewness cutoffs, keeping the other cutoffs the same.
+
+```{r}
+#| label: skewCompare
+wideGrid <- c(5, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300, 400, 500, 700, 1000)
+wide <- runGrid(pop$generator, wideGrid, pop$mu,
+                theoSE = iidSE(pop$sigma), pred = iidPrediction(pop$gamma1, pop$gamma2))
+skewValues <- c(0.1, 0.2, 0.3, 0.5)
+skewCompare <- data.frame(
+  skewCut = skewValues,
+  predictedN = sapply(skewValues, function(s) predictedN(pop$gamma1, s)),
+  chosenN = sapply(skewValues, function(s) {
+    crit <- criteria
+    crit$skew <- s
+    smallestN(wide$table, crit)
+  })
+)
+knitr::kable(skewCompare)
+```
+
+Halving the skewness cutoff from 0.2 to 0.1 multiplies the required n by about 4, as the formula (2 / cutoff)² says.
+For looser cutoffs (0.3 and 0.5) the answer stops following the skewness formula, because the QQ check becomes the
+one that decides. So there is no single "right" n for this population: the answer is only meaningful together with
+the standard used to define "normal enough".
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+```{r}
+#| label: summaryNumbers
+star     <- tab[tab$n == nStar, ]
+lastFail <- tab[tab$n == max(tab$n[tab$n < nStar & !tab$normalEnough]), ]
+failed   <- c(skewness = abs(lastFail$skew) > criteria$skew,
+              kurtosis = abs(lastFail$exKurt) > criteria$kurt,
+              QQ = lastFail$qqCor < criteria$qqCor)
+at30     <- tab[tab$n == 30, ]
+lucky    <- tab$n[tab$n < nStar & tab$normalEnough]
+seRange  <- range(tab$seRatio)
+meanGapZ <- abs(tab$simMean - tab$theoMean) / (tab$theoSE / sqrt(num))
+```
+
+The prediction from section 2 was n = `r predictedN(pop$gamma1)`, and the simulation gave n = `r nStar`. The plot below shows
+why. Skewness was the check that decided the answer, so it shows the skewness of the sample means for every n I
+tested between 50 and 200.
+
+```{r}
+#| label: whyN
+#| fig.width: 10
+#| fig.height: 5.5
+zoom <- tab[tab$n >= 50 & tab$n <= 200, ]
+nLine <- seq(50, 200, length.out = 300)
+band <- 1.96 * sqrt(6 / num)
+plot(NULL, xlim = c(50, 200), ylim = c(0.05, 0.35),
+     xlab = "Sample size n", ylab = "Skewness of the sample means",
+     main = paste0("Why n = ", nStar, ": skewness near the cutoff"))
+polygon(c(nLine, rev(nLine)), c(2 / sqrt(nLine) + band, rev(2 / sqrt(nLine) - band)),
+        col = "gray90", border = NA)
+lines(nLine, 2 / sqrt(nLine), col = "black", lwd = 2)
+abline(h = criteria$skew, col = "firebrick", lwd = 2, lty = 2)
+abline(v = nStar, col = "steelblue", lwd = 2, lty = 3)
+points(zoom$n, zoom$skew, pch = ifelse(zoom$normalEnough, 16, 4), cex = 1.4,
+       col = ifelse(zoom$normalEnough, "steelblue", "firebrick"), lwd = 2)
+legend("topright",
+       c("Prediction 2 / sqrt(n)", "Monte Carlo noise band (95%)", paste("Cutoff", criteria$skew),
+         paste("Chosen n =", nStar), "Passed all checks", "Failed a check"),
+       col = c("black", "gray80", "firebrick", "steelblue", "steelblue", "firebrick"),
+       lty = c(1, NA, 2, 3, NA, NA), lwd = c(2, NA, 2, 2, 2, 2), pch = c(NA, 15, NA, NA, 16, 4),
+       pt.cex = c(NA, 2, NA, NA, 1.4, 1.4), bty = "n")
+```
+
+How to read it: the black line is the skewness the formula predicts, and the gray band is roughly how far the simulated value can move by Monte Carlo noise alone (about ±`r round(band, 3)`, using the noise formula sqrt(6 / num) from 01normal.qmd, which is a rough guide for a skewed population). The predicted line crosses my cutoff (red dashed) exactly at n = `r predictedN(pop$gamma1)`. To the left of that point the true skewness is above the cutoff, so a point
+can only fall below it by luck: that is what happened at n = `r paste(lucky, collapse = " and ")` (blue dots on the left),
+and the n values right after them failed again. From n = `r nStar` on, every point passed, so `r nStar` is the smallest n
+that I can defend. Because the line crosses the cutoff right at 100, a different seed could move the answer by a
+few n in either direction.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+```{r}
+#| label: sePlot
+plotSE(tab, label = "Exponential")
+```
+
+Center: the simulated mean was slightly below mu = 1 at `r sum(tab$simMean < 1)` of `r nrow(tab)` sample sizes. Measured in Monte Carlo standard errors
+(theoretical SE / sqrt(num)), the gap was above 2 at `r sum(meanGapZ > 2)` of `r nrow(tab)` sample sizes, with a largest value of
+`r round(max(meanGapZ), 2)`. At first this looked like a problem, but it comes from my seed design: because I reset the seed
+before each n, the run for sample size n uses the first n × num random numbers of the same stream. The rows share
+most of their random numbers, so if the stream happens to run a little low, every row moves down together. These are
+not `r nrow(tab)` independent checks of the mean, and a gap under 3 standard errors from one stream is not unusual.
+
+Spread: the SE ratio stayed between `r round(seRange[1], 3)` and `r round(seRange[2], 3)` at every n, including n = 1, and
+`r sum(tab$seOK)` of `r nrow(tab)` sample sizes passed my 5 percent SE check. The formula sigma / sqrt(n) does not need a large n;
+it holds for any n because it only uses independence and a finite variance.
+
+# 6. Why did you choose that value?
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotSampling(res, nShow = unique(c(5, 30, nStar, 500)), mu = pop$mu, theoSE = iidSE(pop$sigma), label = pop$label)
+```
+
+At n = 5 the histogram is clearly right skewed and the QQ plot bends upward at the right end. At n = 30 the bend is
+smaller but still visible: the right tail of the QQ plot sits above the line and the left tail sits above it too,
+which is the shape of a distribution with a short left tail and a long right tail. At n = `r nStar` a small bend is still
+visible at the lower end, but much less than at n = 30. At n = 500 the points follow the line.
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Exponential")
+```
+
+The simulated skewness follows the red prediction 2 / sqrt(n) closely and crosses my cutoff near n = 100.
+
+Is n = 30 enough? If the sampling distribution were normal, 2.5 percent of the standardized means would fall in
+each tail beyond ±1.96. At n = 30 the lower tail held `r round(100 * at30$tailLow, 2)` percent and the upper tail held
+`r round(100 * at30$tailHigh, 2)` percent. So a 95 percent interval built from the normal approximation at n = 30 would land entirely above the true mean about
+`r round(at30$tailHigh / at30$tailLow, 1)` times as often as entirely below it, instead of equally often.
+
+I chose n = `r nStar` because:
+
+* At n = `r nStar` the skewness was `r round(star$skew, 3)`, the excess kurtosis `r round(star$exKurt, 3)` and the QQ correlation
+  `r round(star$qqCor, 4)`, all within my cutoffs, and every larger n I tested also passed.
+* At the largest n that still failed (n = `r lastFail$n`), the check that failed was `r paste(names(failed)[failed], collapse = " and ")`
+  (skewness `r round(lastFail$skew, 3)`).
+* The result matches the prediction from section 2, which I made before running the simulation.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    "Mean of the sample means equals 1 at every n (within noise)",
+    "SE equals 1 / sqrt(n) at every n, including n = 1",
+    "Right skewed at small n, QQ plot bends up at both ends",
+    paste("Skewness about 2 / sqrt(30) =", round(2 / sqrt(30), 3), "at n = 30, so n = 30 is not enough"),
+    "Skewness, not kurtosis, decides the answer",
+    paste("Smallest normal n is about", predictedN(pop$gamma1)),
+    "(Assumed, not written in section 2) Once n passes, larger n also pass",
+    "Shapiro Wilk rejects at almost every n"
+  ),
+  Result = c(
+    paste0("Below 1 at ", sum(tab$simMean < 1), " of ", nrow(tab), " n; gap above 2 Monte Carlo SEs at ", sum(meanGapZ > 2), " n"),
+    paste0("SE ratio ", round(seRange[1], 3), " to ", round(seRange[2], 3), "; ", sum(tab$seOK), " of ", nrow(tab), " passed"),
+    "Seen at n = 5 and n = 30 (section 6)",
+    paste0("Skewness ", round(at30$skew, 3), "; tails ", round(100 * at30$tailLow, 2), "% and ", round(100 * at30$tailHigh, 2), "%"),
+    paste0("Last failure (n = ", lastFail$n, ") failed on ", paste(names(failed)[failed], collapse = " and ")),
+    paste("n =", nStar),
+    paste0("n = ", paste(lucky, collapse = " and "), " passed, then larger n failed again"),
+    paste0("Rejected at ", sum(tab$swP < 0.05), " of ", nrow(tab), " n")
+  ),
+  Match = c("Different", "Same", "Same", "Same", "Same", "Same", "Different", "Same")
+)
+knitr::kable(predictionCheck)
+```
+
+I split the four predictions from section 2 into seven statements I could check. Six of them held, and one thing I had assumed without writing it down did not. The formula 2 / sqrt(n) predicted both the size of the skewness at n = 30
+(`r round(2 / sqrt(30), 3)` predicted, `r round(at30$skew, 3)` simulated) and the final answer (`r predictedN(pop$gamma1)` predicted,
+`r nStar` simulated). Two results were different from what I expected.
+
+The mean. I expected the simulated mean to scatter around 1, sometimes above and sometimes below. Instead it was
+below 1 at `r sum(tab$simMean < 1)` of `r nrow(tab)` sample sizes, and more than 2 Monte Carlo standard errors below at `r sum(meanGapZ > 2)` of them.
+This is not a problem with the CLT; it comes from resetting the seed before every n. The run for sample size n
+uses the first n × num random numbers of one stream, so the rows share most of their random numbers and move
+together (section 5). I had been treating the rows as independent checks, and they are not.
+
+The order of passing. I assumed that once a sample size passed, the larger ones would pass too. Near the cutoff
+that was not true: n = `r paste(lucky, collapse = " and ")` passed while n values right after them failed. Near n = 100 the true
+skewness is less than one noise band away from the cutoff, so whether a single row passes is partly luck. This is why my rule requires
+every larger n to pass, not just the first one that does.
+
+## Limitations
+
+* My answer of n = `r nStar` belongs to my cutoffs. With a skewness cutoff of 0.1 the same population needed
+  n = `r skewCompare$chosenN[skewCompare$skewCut == 0.1]`, so the number should always be reported together with the standard behind it.
+* The exact boundary is uncertain by a few n, because the predicted skewness crosses the cutoff right at 100 and
+  the noise band is about ±`r round(band, 3)` wide. A different seed could give a slightly different answer; I test this in
+  the reproducibility file.
+* I only simulated lambda = 1. Section 2 showed that lambda does not change the shape, so this does not limit the
+  conclusion for exponential populations, but it says nothing about other skewed populations.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.
