@@ -206,16 +206,22 @@ Monte Carlo noise, so I tried several values for each check on the table above a
 skewCuts <- c(0.01, 0.02, 0.05, 0.1, 0.2, 0.3)
 kurtCuts <- c(0.02, 0.05, 0.1, 0.2, 0.3, 0.5)
 seCuts   <- c(0.005, 0.01, 0.02, 0.03, 0.05, 0.1)
+qqCuts   <- c(0.99, 0.995, 0.998, 0.999, 0.9995, 0.9999)
 cutCompare <- data.frame(
   skewCut = skewCuts, skewPassed = sapply(skewCuts, function(k) sum(abs(tab$skew) <= k)),
   kurtCut = kurtCuts, kurtPassed = sapply(kurtCuts, function(k) sum(abs(tab$exKurt) <= k)),
-  seTol   = seCuts,   sePassed   = sapply(seCuts,   function(k) sum(abs(tab$seRatio - 1) <= k))
+  seTol   = seCuts,   sePassed   = sapply(seCuts,   function(k) sum(abs(tab$seRatio - 1) <= k)),
+  qqCut   = qqCuts,   qqPassed   = sapply(qqCuts,   function(k) sum(tab$qqCor >= k))
 )
 knitr::kable(cutCompare)
 skewFloor <- min(skewCuts[cutCompare$skewPassed == nrow(tab)])
 kurtFloor <- min(kurtCuts[cutCompare$kurtPassed == nrow(tab)])
 seFloor   <- min(seCuts[cutCompare$sePassed == nrow(tab)])
+qqStrict  <- max(qqCuts[cutCompare$qqPassed == nrow(tab)])
 ```
+
+For the QQ correlation a higher cutoff is stricter, so I looked for the strictest value that still accepted every
+sample size: `r qqStrict`. Only `r cutCompare$qqPassed[length(qqCuts)]` of `r nrow(tab)` passed at `r qqCuts[length(qqCuts)]`.
 
 For skewness, a cutoff of `r skewCuts[1]` accepted only `r cutCompare$skewPassed[1]` of `r nrow(tab)` sample sizes,
 and the smallest cutoff I tried that accepted all of them was `r skewFloor`. For kurtosis the smallest such cutoff was
@@ -323,3 +329,13 @@ n = `r tab$n[which.min(tab$swP)]`). Because the population is exactly normal, an
 at the 5 percent level the test is expected to reject a true null about 1 time in 20. My rows are also not independent
 of each other (I reset the seed before each n, so they reuse the same random stream), so one unlucky stream could
 affect several rows at once.
+
+
+## Limitations
+
+* The normal population can only show that my cutoffs are not too strict, because it has no real departure from
+  normality to catch. Whether they are strict enough is tested on the exponential population in 03exponential.qmd.
+* I chose num using the normal population. The noise formulas sqrt(6 / num) and sqrt(24 / num) are for normal data;
+  for skewed populations the skewness estimate is somewhat noisier, so the margins in section 3 are a best case.
+* All results come from one seed (`r student_id`). The reproducibility file reruns an analysis with a different seed.
+* The rows for different n share one random stream, so they are not independent checks of each other.
