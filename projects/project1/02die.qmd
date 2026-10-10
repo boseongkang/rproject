@@ -1,0 +1,592 @@
+---
+title: "CLT Experiment 2"
+subtitle: "Six Sided Die"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+pop <- populations$die
+```
+
+# 1. What population are you sampling from?
+
+A fair six sided die. Each face from 1 to 6 comes up with probability 1/6, so this is a discrete uniform distribution.
+Its mean is 3.5 and its variance is 35/12 (SD about `r round(pop$sigma, 3)`). It is perfectly symmetric (skewness 0), and its
+excess kurtosis is about `r round(pop$gamma2, 3)`: the tails are lighter than a normal distribution's, because no value
+can be below 1 or above 6. It is also discrete: one roll can only be a whole number.
+
+All three CLT assumptions hold here: each roll is independent of the others, every roll comes from the same die, and
+the variance is finite. So the usual formula SE = sigma / sqrt(n) should apply.
+
+The die is a different kind of test from the exponential. The exponential's problem was skewness, and the die
+has none; its problems are flat, short tails and gaps between the possible values.
+
+```{r}
+#| label: population
+#| fig.width: 7
+#| fig.height: 4.5
+set.seed(student_id)
+popDraws <- pop$generator(100000)
+
+share <- table(popDraws) / length(popDraws)
+plot(1:6, as.numeric(share), type = "h", lwd = 8, col = "gray60", ylim = c(0, 0.32), xlim = c(-1, 8),
+     main = "Die population: 100,000 rolls", xlab = "Face", ylab = "Proportion")
+abline(h = 1 / 6, col = "firebrick", lwd = 2, lty = 2)
+curve(dnorm(x, mean = pop$mu, sd = pop$sigma), add = TRUE, col = "steelblue", lwd = 2)
+legend("topright", c("Simulated share", "True share 1/6", "Normal with same mean and SD"),
+       col = c("gray60", "firebrick", "steelblue"), lwd = c(8, 2, 2), lty = c(1, 2, 1), bty = "n")
+
+data.frame(
+  quantity    = c("mean", "sd", "skewness", "excess kurtosis"),
+  theoretical = c(pop$mu, pop$sigma, pop$gamma1, pop$gamma2),
+  simulated   = c(mean(popDraws), sd(popDraws), skewness(popDraws), exKurtosis(popDraws))
+)
+```
+
+Each face came up close to 1/6 of the time, and the simulated values are close to the theoretical ones. The normal
+curve with the same mean and SD has `r round(100 * (1 - pnorm(6.5, pop$mu, pop$sigma) + pnorm(0.5, pop$mu, pop$sigma)), 1)` percent of its area outside 0.5 to 6.5 (half a step beyond the lowest and
+highest faces), where the die has nothing, and it is highest in the middle while the die is flat. (The faces are 1 apart, so a share and a density
+are on the same scale here, and the two can be drawn on one plot.)
+
+## Does each face really approach 1/6?
+
+Before checking the shares, I had a question. When people roll a real die a few times, the faces do not come up
+1/6 of the time each. I wondered whether the share of each face really gets closer to 1/6 if I keep rolling.
+
+There are two different reasons a share can differ from 1/6. The first is chance: with only a few rolls, some faces
+come up more often just by luck. This should shrink as the number of rolls N grows (the law of large numbers), and
+the standard error of a share, sqrt((1/6)(5/6) / N), says how fast: about 10 times smaller for every 100 times more
+rolls. The second is a die that is not perfectly balanced. Real dice can be slightly biased: in Weldon's 1894
+experiment (26,306 throws of 12 dice), fives and sixes came up 33.77 percent of the time instead of 33.33 percent,
+which Pearson attributed to the hollowed out pips. More rolls do not remove this kind of bias; the shares then
+approach the die's own probabilities, not 1/6. My simulation can only test the first reason, because
+`sample(1:6, n, replace = TRUE)` gives every face probability exactly 1/6 by construction.
+
+(Source: Z. Labby, "Weldon's Dice, Automated," CHANCE 22(4), 2009, pp. 6–13. I checked the 33.77 percent myself from the WeldonDice data in the R package vcd: about 0.3377 of the 12 × 26,306 dice showed a five or six.)
+
+I tested this in two ways.
+
+### One long sequence of rolls
+
+First I followed the share of each face as the 100,000 rolls from my seed came in, and stopped to check it at N = 10, 100, 1,000, 10,000 and 100,000.
+
+```{r}
+#| label: runningShare
+#| fig.width: 9
+#| fig.height: 5
+N <- 1:length(popDraws)
+runShare <- sapply(1:6, function(f) cumsum(popDraws == f) / N)
+showN <- unique(round(exp(seq(log(6), log(length(popDraws)), length.out = 400))))
+plot(NULL, xlim = c(6, length(popDraws)), ylim = c(0, 0.65), log = "x", xaxt = "n",
+     xlab = "Number of rolls N (log scale)", ylab = "Share of the face so far",
+     main = paste0("Share of each face as the rolls come in (seed ", student_id, ")"))
+axis(1, at = c(10, 100, 1000, 10000, 100000), labels = c("10", "100", "1,000", "10,000", "100,000"))
+polygon(c(showN, rev(showN)),
+        c(1 / 6 + 1.96 * sqrt((1 / 6) * (5 / 6) / showN), rev(1 / 6 - 1.96 * sqrt((1 / 6) * (5 / 6) / showN))),
+        col = "gray90", border = NA)
+faceCols <- c("black", "steelblue", "darkorange", "darkgreen", "purple", "firebrick")
+for (f in 1:6) lines(showN, runShare[showN, f], col = faceCols[f], lwd = 1.5)
+abline(h = 1 / 6, lty = 2, lwd = 2)
+legend("topright", c(paste("face", 1:6), "1/6 +/- 1.96 SE"), col = c(faceCols, "gray80"),
+       lwd = c(rep(1.5, 6), NA), pch = c(rep(NA, 6), 15), pt.cex = 2, bty = "n", ncol = 2, cex = 0.85)
+
+checkN <- c(10, 100, 1000, 10000, 100000)
+runTable <- data.frame(
+  rolls = format(checkN, big.mark = ",", scientific = FALSE),
+  round(runShare[checkN, ], 3),
+  largestGap = sapply(checkN, function(k) max(abs(runShare[k, ] - 1 / 6)))
+)
+names(runTable)[2:7] <- paste("face", 1:6)
+knitr::kable(runTable, digits = 4, row.names = FALSE)
+```
+
+After 10 rolls the shares were far from 1/6 (face `r which.max(runShare[10, ])` came up `r round(max(runShare[10, ]) * 10)` times out of 10, and face `r paste(which(runShare[10, ] == 0), collapse = " and ")` not at all), which is
+what I see when I roll a die by hand. As the rolls came in, every face moved toward 1/6, and the gray band, which shrinks like 1 / sqrt(N), shows how close chance alone should bring them. After 100,000 rolls the largest gap was `r format(round(runTable$largestGap[checkN == 100000], 4), scientific = FALSE)`.
+
+### How large does N need to be?
+
+One sequence is only one example; a different sequence of rolls would wander differently. To see how accurate the law of large numbers is at each N, I repeated the whole experiment `r format(1000, big.mark = ",")` times for each N (resetting the seed
+before each N, as in the rest of my analysis) and recorded the largest gap from 1/6 among the six faces each time.
+
+Before running it, I used the standard error to predict. For one face, 95 percent of the shares should be within 1.96 × sqrt((1/6)(5/6) / N) of 1/6. Setting that equal to a tolerance d and solving for N gives N = 1.96² × (5/36) / d². For d = 0.01 (one percentage point) that is about `r format(ceiling(1.96^2 * (5 / 36) / 0.01^2), big.mark = ",")` rolls, and for d = 0.001 it is about `r format(ceiling(1.96^2 * (5 / 36) / 0.001^2), big.mark = ",")` rolls. Since all six faces have to be close at the same time, I expected to need somewhat more than that.
+
+```{r}
+#| label: lawOfLargeNumbers
+#| fig.width: 8
+#| fig.height: 4.5
+lawN <- c(10, 100, 1000, 10000, 100000)
+lawReps <- 1000
+lawTable <- do.call(rbind, lapply(lawN, function(k) {
+  set.seed(student_id)
+  gaps <- replicate(lawReps, {
+    shares <- tabulate(pop$generator(k), nbins = 6) / k
+    max(abs(shares - 1 / 6))
+  })
+  data.frame(rolls = k,
+             typicalGap = median(gaps),
+             gap95 = unname(quantile(gaps, 0.95)),
+             withinOnePoint = mean(gaps <= 0.01),
+             withinTenthPoint = mean(gaps <= 0.001))
+}))
+knitr::kable(transform(lawTable, rolls = format(rolls, big.mark = ",", scientific = FALSE)),
+             digits = 4, row.names = FALSE)
+
+plot(lawTable$rolls, lawTable$typicalGap, log = "xy", pch = 16, cex = 1.4, xaxt = "n",
+     xlab = "Number of rolls N (log scale)", ylab = "Typical largest gap from 1/6 (log scale)",
+     main = "How fast the shares approach 1/6")
+axis(1, at = lawN, labels = format(lawN, big.mark = ",", scientific = FALSE))
+lines(lawN, lawTable$typicalGap[1] * sqrt(lawN[1] / lawN), col = "firebrick", lwd = 2, lty = 2)
+legend("topright", c("Simulated (median of 1,000 repeats)", "Shrinking like 1 / sqrt(N)"),
+       col = c("black", "firebrick"), pch = c(16, NA), lty = c(NA, 2), lwd = c(NA, 2), bty = "n")
+shrink <- lawTable$typicalGap[-length(lawN)] / lawTable$typicalGap[-1]
+```
+
+`typicalGap` is the median of the largest gap over the `r format(lawReps, big.mark = ",")` repeats, and `gap95` is the gap that 95 percent of the repeats stayed under. `withinOnePoint` and `withinTenthPoint` are the shares of repeats in which all six faces were within 0.01 and within 0.001 of 1/6.
+
+* The gap keeps shrinking: every time N grew 10 times, the typical gap became `r round(min(shrink), 1)` to `r round(max(shrink), 1)` times smaller, close to sqrt(10) = `r round(sqrt(10), 2)`. The points follow the red 1 / sqrt(N) line.
+* With 10 rolls, being within one percentage point is impossible: each share must be a multiple of 1/10, and the
+  closest one to 1/6 is 0.2, which is 0.033 away. So "close to 1/6" also needs enough rolls for the share to be able to land near 1/6, the same gap problem I found for the sample mean later in this file.
+* All six faces were within one percentage point in `r round(100 * lawTable$withinOnePoint[lawN == 1000])` percent of the repeats with 1,000 rolls and
+  `r round(100 * lawTable$withinOnePoint[lawN == 10000])` percent with 10,000 rolls, which fits the prediction of about `r format(ceiling(1.96^2 * (5 / 36) / 0.01^2), big.mark = ",")` rolls for one face.
+* Within 0.001 is much harder: even with 100,000 rolls it happened in only `r round(100 * lawTable$withinTenthPoint[lawN == 100000], 1)` percent of the repeats, because it needs about `r format(ceiling(1.96^2 * (5 / 36) / 0.001^2), big.mark = ",")` rolls for a single face.
+
+So the shares do approach 1/6, but there is no N where they "arrive". The law of large numbers says the gap goes to 0 as N grows; how large N must be depends on how close I need to be, and each extra digit of accuracy costs 100 times more rolls. This is the same 1 / sqrt(N) rate that appears in the CLT formula sigma / sqrt(n).
+
+## Is each face really 1/6?
+
+The shares above are close to 1/6, but "close" needs a scale. With 100,000 rolls, the share of one face should
+be 1/6 give or take about sqrt((1/6)(5/6) / 100,000) = `r round(sqrt((1/6) * (5/6) / 100000), 5)` (one standard error), just from chance. So for
+each face I measured how far its share was from 1/6 in standard errors, and I ran a chi square test that checks
+all six faces at once.
+
+```{r}
+#| label: faceCheck
+#| fig.width: 7
+#| fig.height: 4.5
+rollSE <- sqrt((1 / 6) * (5 / 6) / 100000)
+faceCheck <- data.frame(
+  face = 1:6,
+  share = as.numeric(share),
+  gapInSE = (as.numeric(share) - 1 / 6) / rollSE
+)
+knitr::kable(faceCheck, digits = 4)
+faceTest <- chisq.test(table(popDraws), p = rep(1 / 6, 6))
+faceTest
+
+plot(1:6, faceCheck$share, pch = 16, cex = 1.4, ylim = 1 / 6 + c(-4, 4) * rollSE,
+     xlab = "Face", ylab = "Share of 100,000 rolls", main = paste("Share of each face with seed", student_id))
+rect(0.5, 1 / 6 - 1.96 * rollSE, 6.5, 1 / 6 + 1.96 * rollSE, col = "gray90", border = NA)
+abline(h = 1 / 6, col = "firebrick", lwd = 2, lty = 2)
+points(1:6, faceCheck$share, pch = 16, cex = 1.4)
+legend("topright", c("Share of the face", "1/6", "1/6 +/- 1.96 SE"),
+       col = c("black", "firebrick", "gray80"), pch = c(16, NA, 15), lty = c(NA, 2, NA),
+       lwd = c(NA, 2, NA), pt.cex = c(1.4, NA, 2), bty = "n", cex = 0.85)
+```
+
+All six shares are inside the gray band (1/6 ± 1.96 standard errors); the largest gap was
+`r round(max(abs(faceCheck$gapInSE)), 2)` standard errors. The chi square test did not reject a fair die (p = `r round(faceTest$p.value, 3)`).
+So the 100,000 rolls from my seed behave like a fair die, and the small differences from 1/6 are the size
+chance alone would produce.
+
+# 2. What did you expect before running the simulation?
+
+I made five predictions before running anything.
+
+Center and spread: the mean of the sample means should be 3.5 and their SD should be sigma / sqrt(n) at every n,
+including n = 1, for the same reason as in the other files (only independence and a finite variance are needed).
+
+Skewness: the die is symmetric, so the sample mean is symmetric too, and its skewness should be 0 at every n
+(gamma1 / sqrt(n) = 0). The skewness check should never be the one that decides.
+
+Kurtosis: the excess kurtosis of the mean should be gamma2 / n = `r round(pop$gamma2, 3)` / n. It is negative, so the
+sampling distribution should start out too flat with short tails, and then fill in toward the normal shape.
+My kurtosis cutoff is `r criteria$kurt`, so I need `r round(abs(pop$gamma2), 3)` / n ≤ `r criteria$kurt`, which means
+
+```{r}
+#| label: prediction
+kurtN <- ceiling(abs(pop$gamma2) / criteria$kurt)
+kurtN
+data.frame(n = c(1, 2, 5, 30),
+           predSkew = pop$gamma1 / sqrt(c(1, 2, 5, 30)),
+           predKurt = pop$gamma2 / c(1, 2, 5, 30))
+```
+
+So from the formulas alone, kurtosis decides, at about n = `r kurtN`, which is much faster than the exponential.
+
+Tails: one roll is at most 2.5 away from 3.5, which is only `r round(2.5 / pop$sigma, 2)` SDs. So at n = 1 no value can be beyond
+±1.96 SDs, and I expected the tail shares to be 0 instead of 2.5 percent.
+
+Discreteness: the mean of n rolls is a sum of whole numbers divided by n, so it can only take values in steps of
+1 / n, between 1 and 6. That is 5n + 1 possible values (6 at n = 1, 11 at n = 2, 26 at n = 5).
+
+## What the formulas cannot see
+
+The skewness and kurtosis formulas only give two numbers. To see what those two numbers miss, I did not need a
+simulation: for a die, the exact distribution of the mean can be counted. The sum of n rolls is the sum of n − 1 rolls
+plus one more roll, so I built the probabilities one roll at a time.
+
+```{r}
+#| label: exactDie
+exactDieMean <- function(n) {
+  p <- rep(1 / 6, 6)
+  if (n > 1) {
+    for (i in 2:n) {
+      new <- rep(0, length(p) + 5)
+      for (face in 1:6) {
+        idx <- face:(face + length(p) - 1)
+        new[idx] <- new[idx] + p / 6
+      }
+      p <- new
+    }
+  }
+  data.frame(value = (n:(6 * n)) / n, prob = p)
+}
+
+largestCdfGap <- function(e, n, shift = 0) {
+  F <- cumsum(e$prob)
+  Fbefore <- c(0, head(F, -1))
+  normalF <- pnorm(e$value + shift, mean = pop$mu, sd = pop$sigma / sqrt(n))
+  if (shift == 0) max(abs(F - normalF), abs(Fbefore - normalF)) else max(abs(F - normalF))
+}
+
+exactN <- c(1, 2, 5, 8, 30, 100)
+exactTable <- do.call(rbind, lapply(exactN, function(n) {
+  e <- exactDieMean(n)
+  d <- e$value - sum(e$value * e$prob)
+  v <- sum(d^2 * e$prob)
+  data.frame(n = n,
+             possibleValues = nrow(e),
+             stepInSE = (1 / n) / (pop$sigma / sqrt(n)),
+             formulaKurt = pop$gamma2 / n,
+             exactKurt = sum(d^4 * e$prob) / v^2 - 3,
+             exactSkew = sum(d^3 * e$prob) / v^1.5,
+             largestCdfGap = largestCdfGap(e, n))
+}))
+knitr::kable(exactTable, digits = 4)
+```
+
+`exactKurt` and `exactSkew` come from the counted probabilities, with no random numbers. They agree with the formulas
+to every digit shown, so the formulas are not wrong. What they cannot see is the last two columns. `stepInSE` is the
+gap between two neighbouring possible values, measured in standard errors, and `largestCdfGap` is the largest vertical
+distance between the exact CDF of the mean (a staircase) and the normal CDF. At n = 8 that distance is
+`r round(100 * exactTable$largestCdfGap[exactTable$n == 8], 2)` percentage points, even though the kurtosis there is only `r round(exactTable$formulaKurt[exactTable$n == 8], 3)`.
+
+```{r}
+#| label: formulaBlind
+#| fig.width: 11
+#| fig.height: 4
+old <- par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+for (n in c(2, 8)) {
+  e <- exactDieMean(n)
+  se <- pop$sigma / sqrt(n)
+  plot(stepfun(e$value, c(0, cumsum(e$prob))), do.points = FALSE, lwd = 2,
+       xlim = pop$mu + c(-3, 3) * se, main = paste("Exact CDF of the mean, n =", n),
+       xlab = "Sample mean", ylab = "P(mean <= x)")
+  curve(pnorm(x, mean = pop$mu, sd = se), add = TRUE, col = "firebrick", lwd = 2)
+}
+nLine <- exp(seq(log(1), log(100), length.out = 400))
+plot(nLine, 1 / nLine, type = "l", log = "x", lwd = 2, col = "darkorange", ylim = c(0, 1),
+     xlab = "Sample size n (log scale)", ylab = "Size relative to n = 1",
+     main = "Kurtosis shrinks faster than the steps")
+lines(nLine, 1 / sqrt(nLine), lwd = 2, col = "black")
+abline(v = kurtN, lty = 3, col = "gray40")
+legend("topright", c("Kurtosis: 1 / n", "Step in SE units: 1 / sqrt(n)"),
+       col = c("darkorange", "black"), lwd = 2, bty = "n")
+par(old)
+```
+
+The two left panels show the exact CDF (black staircase) against the normal CDF (red). At n = 2 the steps are large;
+at n = 8 they are smaller but still clearly there. The right panel shows why the steps outlast the kurtosis: the
+kurtosis formula shrinks like 1 / n, but the step in SE units is (1 / n) / (sigma / sqrt(n)) = 1 / (sigma × sqrt(n)), which
+only shrinks like 1 / sqrt(n). At n = `r kurtN`, where my kurtosis cutoff is first met, the kurtosis is down to
+`r round(100 / kurtN)` percent of its n = 1 value but the step is still `r round(100 / sqrt(kurtN))` percent.
+
+So I expected the gaps to show up in the QQ check, because a QQ plot of a variable with gaps is a staircase, and that
+they might keep the QQ check failing after kurtosis passes. I could not predict for how long, because there is no
+formula that turns the step size into my QQ correlation.
+
+# 3. Which sample sizes did you investigate?
+
+## Coarse grid, then a finer grid
+
+I expected a fast answer (near n = `r kurtN`), so my coarse grid is dense at small n: `r paste(pop$coarse, collapse = ", ")`.
+As in the other files, the code then adds values between the last failing n and the first passing n.
+
+```{r}
+#| label: simulate
+res <- analyzePopulation(pop)
+tab <- res$table
+nStar <- smallestN(tab)
+added <- setdiff(tab$n, pop$coarse)
+showTable(tab)
+```
+
+The finer grid added `r paste(added, collapse = ", ")`, the only whole number between the last failing and the first passing
+coarse value.
+
+Number of distinct values the sample mean took in my simulation:
+
+```{r}
+#| label: distinct
+distinct <- data.frame(
+  n = tab$n,
+  possible = 5 * tab$n + 1,
+  observed = sapply(res$means, function(m) length(unique(m)))
+)
+knitr::kable(distinct, row.names = FALSE)
+allSeen <- max(distinct$n[distinct$possible == distinct$observed])
+```
+
+Up to n = `r allSeen` every possible value showed up. For large n the extreme values (all ones or all sixes) are so rare that
+they never appeared in `r format(num, big.mark = ",")` repetitions.
+
+## Which check failed?
+
+```{r}
+#| label: whichFailed
+failTable <- data.frame(
+  n = tab$n,
+  skewOK = abs(tab$skew) <= criteria$skew,
+  kurtOK = abs(tab$exKurt) <= criteria$kurt,
+  qqOK = tab$qqCor >= criteria$qqCor
+)
+knitr::kable(failTable)
+kurtPass <- min(tab$n[failTable$kurtOK & failTable$skewOK])
+```
+
+The skewness check passed at every n, as expected. The kurtosis check passed from n = `r kurtPass` (my prediction
+was `r kurtN`). But the QQ check kept failing after that, so the QQ check, not kurtosis, decided the answer.
+
+## Is it the gaps or the short tails?
+
+The QQ correlation of the die means could be low for two reasons: the gaps between possible values (discreteness),
+or the short tails (negative kurtosis). To separate them I ran two extra versions with the same seed:
+
+* Die with the gaps filled in: I added a small uniform random amount between −1 / (2n) and 1 / (2n) to each sample
+  mean. This spreads every spike evenly over its own step, so the gaps disappear and the shape stays almost the same.
+* Continuous uniform population from 0.5 to 6.5: same mean as the die and almost the same kurtosis (−1.2), but no gaps.
+  Its SD is a little larger (`r round(sqrt(3), 3)` instead of `r round(pop$sigma, 3)`), which does not matter here because the QQ correlation does
+  not depend on the scale.
+
+```{r}
+#| label: gapsOrTails
+gapN <- c(2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 30)
+uniformGen <- function(n) runif(n, min = 0.5, max = 6.5)
+gapsOrTails <- do.call(rbind, lapply(gapN, function(n) {
+  set.seed(student_id)
+  dieMeans <- simMeans(pop$generator, n)
+  filled <- dieMeans + runif(num, -1 / (2 * n), 1 / (2 * n))
+  set.seed(student_id)
+  uniMeans <- simMeans(uniformGen, n)
+  data.frame(n = n,
+             qqDie = qqCorrelation(dieMeans),
+             qqDieFilled = qqCorrelation(filled),
+             qqUniform = qqCorrelation(uniMeans),
+             kurtDie = exKurtosis(dieMeans),
+             kurtUniform = exKurtosis(uniMeans))
+}))
+knitr::kable(gapsOrTails, digits = 4)
+filledPass <- min(gapN[gapsOrTails$qqDieFilled >= criteria$qqCor])
+```
+
+Filling in the gaps raised the QQ correlation to almost the same value as the continuous uniform, at every n, and it
+passed my cutoff from n = `r filledPass`. The kurtosis of the die and the uniform are also close. So the short tails are not
+the problem: almost all of the gap between the die and a straight QQ line comes from discreteness.
+
+## Choosing my QQ cutoff again
+
+Because the QQ check decides here, I checked how much the answer depends on the QQ cutoff, keeping the other
+cutoffs the same.
+
+```{r}
+#| label: qqCompare
+qqValues <- c(0.995, 0.998, 0.999)
+qqCompare <- data.frame(
+  qqCut = qqValues,
+  chosenN = sapply(qqValues, function(q) {
+    crit <- criteria
+    crit$qqCor <- q
+    smallestN(tab, crit)
+  })
+)
+knitr::kable(qqCompare)
+```
+
+On the die the QQ cutoff moves the answer a lot, from `r qqCompare$chosenN[1]` to `r qqCompare$chosenN[3]`. With 0.995 the answer equals
+the kurtosis answer, so the gaps do not change it. With 0.998 and 0.999 the gaps decide. I kept 0.998 so that all
+populations are judged by the same standard; I chose 0.998 in 01normal.qmd and checked it on the exponential in 03exponential.qmd.
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+```{r}
+#| label: summaryNumbers
+star     <- tab[tab$n == nStar, ]
+lastFail <- tab[tab$n == max(tab$n[tab$n < nStar & !tab$normalEnough]), ]
+failed   <- c(skewness = abs(lastFail$skew) > criteria$skew,
+              kurtosis = abs(lastFail$exKurt) > criteria$kurt,
+              QQ = lastFail$qqCor < criteria$qqCor)
+at1      <- tab[tab$n == 1, ]
+at30     <- tab[tab$n == 30, ]
+seRange  <- range(tab$seRatio)
+meanGapZ <- abs(tab$simMean - tab$theoMean) / (tab$theoSE / sqrt(num))
+```
+
+My prediction from kurtosis was n = `r kurtN`, and the simulation gave n = `r nStar`. The QQ check decided, so the plot below
+shows the QQ correlation for the die, the die with the gaps filled in, and the continuous uniform.
+
+```{r}
+#| label: whyN
+#| fig.width: 10
+#| fig.height: 5.5
+plot(NULL, xlim = range(gapN), ylim = c(0.985, 1), log = "x",
+     xlab = "Sample size n (log scale)", ylab = "QQ correlation",
+     main = paste0("Why n = ", nStar, ": the gaps keep the QQ correlation low"))
+lines(gapsOrTails$n, gapsOrTails$qqUniform, col = "gray50", lwd = 2, lty = 2)
+lines(gapsOrTails$n, gapsOrTails$qqDieFilled, col = "steelblue", lwd = 2, type = "o", pch = 16)
+lines(gapsOrTails$n, gapsOrTails$qqDie, col = "black", lwd = 2, type = "o", pch = 16)
+abline(h = criteria$qqCor, col = "firebrick", lwd = 2, lty = 2)
+abline(v = nStar, col = "steelblue", lwd = 2, lty = 3)
+abline(v = kurtN, col = "darkorange", lwd = 2, lty = 3)
+legend("bottomright",
+       c("Die", "Die with gaps filled in", "Continuous uniform", paste("Cutoff", criteria$qqCor),
+         paste("Kurtosis prediction n =", kurtN), paste("Chosen n =", nStar)),
+       col = c("black", "steelblue", "gray50", "firebrick", "darkorange", "steelblue"),
+       lty = c(1, 1, 2, 2, 3, 3), lwd = 2, pch = c(16, 16, NA, NA, NA, NA), bty = "n")
+```
+
+How to read it: the blue and gray lines (no gaps) cross my cutoff early. The black line (the real die) sits below them
+at every n and only reaches the cutoff at n = `r nStar`. The distance between the black and blue lines is the cost of
+discreteness, and it shrinks as n grows because the steps of 1 / n get smaller.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+```{r}
+#| label: sePlot
+plotSE(tab, label = "Die")
+```
+
+Center: the simulated mean was within 2 Monte Carlo standard errors (theoretical SE / sqrt(num)) of 3.5 at
+`r sum(meanGapZ <= 2)` of `r nrow(tab)` sample sizes, with a largest gap of `r round(max(meanGapZ), 2)`.
+
+Spread: the SE ratio stayed between `r round(seRange[1], 3)` and `r round(seRange[2], 3)`, and `r sum(tab$seOK)` of `r nrow(tab)` sample sizes passed my
+5 percent SE check, including n = 1. The ratio was below 1 at `r sum(tab$seRatio[tab$n >= 15] < 1)` of the `r sum(tab$n >= 15)` sample sizes from n = 15 on. As in
+03exponential.qmd, these rows share one random stream, so they move together and are not independent checks.
+
+# 6. Why did you choose that value?
+
+With default breaks, a histogram of a discrete variable can be misleading: a bin can land between two possible values
+and stay empty, or hold two of them. So for the die I set the breaks halfway between the possible values of the mean,
+which are 1 / n apart. Each bar then holds exactly one possible value. The red curve is the normal density with mean 3.5
+and SD sigma / sqrt(n).
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotLattice(res, nShow = unique(c(1, 2, nStar, 30)), mu = pop$mu, theoSE = iidSE(pop$sigma), label = pop$label)
+```
+
+At n = 1 the histogram is six bars of equal height and the QQ plot is six flat steps. At n = 2 the bars already form a
+triangle (the sum of two dice), and the QQ plot is a staircase that roughly follows the line, with long flat steps at
+both ends. At n = `r nStar` the bars follow the red curve closely, and the QQ plot follows the line with small steps. At n = 30
+the steps are hard to see.
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Die")
+```
+
+The skewness stays near 0 at every n, and the kurtosis rises toward 0 along the red prediction `r round(pop$gamma2, 3)` / n.
+
+Tails: at n = 1 the lower and upper tail shares beyond ±1.96 were `r round(100 * at1$tailLow, 2)` and `r round(100 * at1$tailHigh, 2)` percent, as
+predicted. At n = 30 they were `r round(100 * at30$tailLow, 2)` and `r round(100 * at30$tailHigh, 2)` percent, close to 2.5. So for the die, n = 30 is more than
+enough under my standard; the rule of thumb is conservative here, the opposite of the exponential.
+
+I chose n = `r nStar` because:
+
+* At n = `r nStar` the skewness was `r round(star$skew, 3)`, the excess kurtosis `r round(star$exKurt, 3)` and the QQ correlation
+  `r round(star$qqCor, 4)`, all within my cutoffs, and every larger n I tested also passed.
+* At the largest n that still failed (n = `r lastFail$n`), the check that failed was `r paste(names(failed)[failed], collapse = " and ")`
+  (QQ correlation `r round(lastFail$qqCor, 4)`).
+* The gaps or tails experiment showed that the QQ failures at n = `r kurtPass` to `r lastFail$n` come from discreteness, not from
+  the shape.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    "Mean of the sample means equals 3.5 at every n (within noise)",
+    "SE equals sigma / sqrt(n) at every n, including n = 1",
+    "Skewness near 0 at every n; skewness never decides",
+    paste0("Kurtosis about ", round(pop$gamma2, 3), " / n; passes at about n = ", kurtN),
+    "From the formulas: kurtosis decides the answer",
+    paste("From the formulas: smallest normal n is about", kurtN),
+    "Tail shares 0 at n = 1",
+    "Shapiro Wilk rejects at almost every n"
+  ),
+  Result = c(
+    paste0("Within 2 Monte Carlo SEs at ", sum(meanGapZ <= 2), " of ", nrow(tab), " n"),
+    paste0("SE ratio ", round(seRange[1], 3), " to ", round(seRange[2], 3), "; ", sum(tab$seOK), " of ", nrow(tab), " passed"),
+    paste0("Largest |skewness| ", round(max(abs(tab$skew)), 3)),
+    paste("Kurtosis passed from n =", kurtPass),
+    paste0("Last failure (n = ", lastFail$n, ") failed on ", paste(names(failed)[failed], collapse = " and ")),
+    paste("n =", nStar),
+    paste0(round(100 * at1$tailLow, 2), "% and ", round(100 * at1$tailHigh, 2), "%"),
+    paste0("Rejected at ", sum(tab$swP < 0.05), " of ", nrow(tab), " n")
+  ),
+  Match = c(ifelse(all(meanGapZ <= 2), "Same", "Different"), "Same", "Same", "Same",
+            "Different", "Different", "Same", "Same")
+)
+knitr::kable(predictionCheck)
+```
+
+The formulas worked: skewness stayed near 0, and kurtosis followed `r round(pop$gamma2, 3)` / n and passed at n = `r kurtPass`.
+What I got wrong was which check would decide. From the formulas I expected kurtosis, but the QQ check still failed at
+n = `r kurtPass` to `r lastFail$n`, where kurtosis had already passed. Section 2 had warned me that the steps shrink more slowly
+than the kurtosis, and the gaps or tails experiment in section 3 confirmed that the steps were the reason. The
+skewness and kurtosis formulas do not know about discreteness at all, so the formula prediction was too optimistic here.
+
+This made me think about what "normal enough" means for a discrete variable. A sample mean of dice can never be exactly
+normal, at any n, because it always has gaps. My QQ check measures shape and discreteness together. For a question like
+"what is the chance that the average of 8 rolls is above 4?", the gaps matter: an average of exactly 4 has probability
+`r round(100 * exactDieMean(8)$prob[abs(exactDieMean(8)$value - 4) < 1e-9], 2)` percent, so P(mean > 4) and P(mean ≥ 4) differ by that much. So I think it is reasonable that my
+standard counts the gaps.
+
+I also checked how much of the CDF gap from section 2 is only about the steps. If I evaluate the normal CDF half a
+step to the right of each possible value (a continuity correction), the largest gap at n = 8 drops from
+`r round(100 * exactTable$largestCdfGap[exactTable$n == 8], 2)` to `r round(100 * largestCdfGap(exactDieMean(8), 8, shift = 1 / 16), 2)` percentage points. So the normal curve describes the die mean well at n = 8; the error
+without the correction comes almost entirely from where the steps are.
+
+Compared with the exponential (n = 100), the die needed far fewer rolls, even though its population looks nothing like a
+normal curve. In my two non normal populations so far, the skewed one converged slowly and the symmetric one fast.
+
+## Limitations
+
+* My answer of n = `r nStar` depends on the QQ cutoff: `r qqCompare$chosenN[1]` with 0.995 and `r qqCompare$chosenN[3]` with 0.999. On the die
+  the QQ cutoff mostly decides how much discreteness I accept.
+* At n = `r nStar` the QQ correlation was `r round(star$qqCor, 5)`, only `r format(round(star$qqCor - criteria$qqCor, 5), scientific = FALSE)` above my cutoff. A different seed
+  could put it just below, and the answer would move to the next n.
+* My QQ check judges the normal approximation without a continuity correction. Section 7 showed that with one, the
+  CDF gap at n = 8 is only `r round(100 * largestCdfGap(exactDieMean(8), 8, shift = 1 / 16), 2)` percentage points, so for probability
+  calculations with a correction, a smaller n than `r nStar` might already be good enough.
+* The QQ correlation is a summary of the whole distribution. It does not show where the steps are; the QQ plots in
+  section 6 do.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.
