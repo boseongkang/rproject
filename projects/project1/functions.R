@@ -109,14 +109,41 @@ runGrid <- function(generator, nValues, mu, theoSE, pred, reps = num, seed = stu
   list(table = tab, means = means)
 }
 
-smallestN <- function(tab) {
+smallestN <- function(tab, crit = criteria) {
   tab <- tab[order(tab$n), ]
-  ok <- isNormalEnough(tab)
+  ok <- isNormalEnough(tab, crit)
   for (i in 1:nrow(tab)) {
     if (all(ok[i:nrow(tab)])) return(tab$n[i])
   }
   NA
 }
+
+refineGrid <- function(tab, howMany = 12) {
+  n0 <- smallestN(tab)
+  if (is.na(n0)) return(numeric(0))
+  below <- tab$n[tab$n < n0]
+  if (length(below) == 0) return(numeric(0))
+  candidates <- unique(round(seq(max(below), n0, length.out = howMany)))
+  setdiff(candidates, tab$n)
+}
+
+combineGrids <- function(a, b) {
+  tab <- rbind(a$table, b$table)
+  tab <- tab[order(tab$n), ]
+  rownames(tab) <- NULL
+  means <- c(a$means, b$means)
+  means <- means[order(as.numeric(names(means)))]
+  list(table = tab, means = means)
+}
+
+searchN <- function(generator, coarse, mu, theoSE, pred, reps = num, seed = student_id) {
+  first <- runGrid(generator, coarse, mu, theoSE, pred, reps, seed)
+  extra <- refineGrid(first$table)
+  if (length(extra) == 0) return(first)
+  second <- runGrid(generator, extra, mu, theoSE, pred, reps, seed)
+  combineGrids(first, second)
+}
+
 
 showTable <- function(tab, digits = 4) {
   cols <- c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio",
@@ -166,6 +193,12 @@ plotConvergence <- function(tab, label = "") {
   abline(h = criteria$qqCor, lty = 2, col = "gray40")
 }
 
+cdfGap <- function(value, prob, mu, se, shift = 0) {
+  F <- cumsum(prob)
+  Fbefore <- c(0, head(F, -1))
+  normalF <- pnorm(value + shift, mean = mu, sd = se)
+  if (shift == 0) max(abs(F - normalF), abs(Fbefore - normalF)) else max(abs(F - normalF))
+}
 plotSE <- function(tab, label = "") {
   plot(tab$n, tab$simSD, log = "xy", pch = 16,
        xlab = "n (log scale)", ylab = "SD of sample means (log scale)",
@@ -181,15 +214,52 @@ populations <- list(
     label = "Standard Normal",
     generator = function(n) rnorm(n, mean = 0, sd = 1),
     mu = 0, sigma = 1, gamma1 = 0, gamma2 = 0,
-    #coarse = c(1, 5, 10, 30, 100)
     coarse = c(1, 2, 3, 5, 10, 20, 30, 50, 100)
-    #coarse = c(1:10, 20, 30, 50, 100)
+  ),
+  die = list(
+    label = "Six Sided Die",
+    generator = function(n) sample(1:6, n, replace = TRUE),
+    mu = 3.5, sigma = sqrt(35 / 12), gamma1 = 0, gamma2 = -222 / 175,
+    coarse = c(1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 50, 100)
+  ),
+  binomial = list(
+    label = "Binomial(5, 0.1)",
+    generator = function(n) rbinom(n, size = 5, prob = 0.1),
+    mu = 0.5, sigma = sqrt(0.45), gamma1 = 0.8 / sqrt(0.45), gamma2 = 0.46 / 0.45,
+    coarse = c(1, 2, 5, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300, 500)
+  ),
+  exponential = list(
+    label = "Exponential(1)",
+    generator = function(n) rexp(n, rate = 1),
+    mu = 1, sigma = 1, gamma1 = 2, gamma2 = 6,
+    coarse = c(1, 2, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500)
   )
 )
 
 analyzePopulation <- function(pop, seed = student_id, reps = num) {
-  runGrid(pop$generator, pop$coarse, pop$mu,
+  searchN(pop$generator, pop$coarse, pop$mu,
           theoSE = iidSE(pop$sigma),
           pred = iidPrediction(pop$gamma1, pop$gamma2),
           reps = reps, seed = seed)
+}
+
+plotLattice <- function(res, nShow, mu, theoSE, label = "") {
+  old <- par(mfrow = c(2, length(nShow)), mar = c(4, 4, 3, 1))
+  on.exit(par(old))
+  for (n in nShow) {
+    m <- res$means[[as.character(n)]]
+    steps <- round((max(m) - min(m)) * n)
+    br <- min(m) - 1 / (2 * n) + (0:(steps + 1)) / n
+    h <- hist(m, breaks = br, plot = FALSE)
+    curveTop <- dnorm(mu, mean = mu, sd = theoSE(n))
+    hist(m, breaks = br, probability = TRUE, col = "gray75", border = if (n <= 10) "white" else NA,
+         ylim = c(0, max(h$density, curveTop)),
+         main = paste0(label, "\nn = ", n), xlab = "Sample mean")
+    curve(dnorm(x, mean = mu, sd = theoSE(n)), add = TRUE, col = "firebrick", lwd = 2)
+  }
+  for (n in nShow) {
+    m <- res$means[[as.character(n)]]
+    qqnorm(m, main = paste("QQ plot: n =", n), pch = 16, cex = 0.3)
+    qqline(m, col = "firebrick", lwd = 2)
+  }
 }
