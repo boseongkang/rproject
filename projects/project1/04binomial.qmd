@@ -1,0 +1,463 @@
+---
+title: "CLT Experiment 4"
+subtitle: "Binomial(5, 0.1) Population"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+pop <- populations$binomial
+```
+
+# 1. What population are you sampling from?
+
+One draw from Binomial(5, 0.1) counts the successes in 5 independent trials when each trial succeeds with probability
+0.1, for example the number of defective items in a box of 5 when each item is defective 10 percent of the time. It can
+only be 0, 1, 2, 3, 4 or 5. Its mean is 5 × 0.1 = 0.5 and its variance is 5 × 0.1 × 0.9 = 0.45 (SD about
+`r round(pop$sigma, 3)`). It is right skewed (skewness (1 − 2p) / sqrt(5p(1 − p)) = `r round(pop$gamma1, 3)`) and its excess kurtosis is
+(1 − 6p(1 − p)) / (5p(1 − p)) = `r round(pop$gamma2, 3)`.
+
+All three CLT assumptions hold: the draws are independent, they all come from the same distribution, and the variance
+is finite. So SE = sigma / sqrt(n) should apply.
+
+This population combines the two problems I met before: it is skewed like the exponential (03exponential.qmd), and it
+is discrete like the die (02die.qmd). It is also very lopsided: most draws are 0.
+
+```{r}
+#| label: population
+#| fig.width: 7
+#| fig.height: 4.5
+set.seed(student_id)
+popDraws <- pop$generator(100000)
+
+trueProb <- dbinom(0:5, size = 5, prob = 0.1)
+share <- as.numeric(table(factor(popDraws, levels = 0:5))) / length(popDraws)
+plot(0:5, share, type = "h", lwd = 8, col = "gray60", ylim = c(0, 0.75), xlim = c(-2, 5.5),
+     main = "Binomial(5, 0.1) population: 100,000 draws", xlab = "Value", ylab = "Proportion")
+points(0:5, trueProb, pch = 4, cex = 1.5, lwd = 2, col = "firebrick")
+curve(dnorm(x, mean = pop$mu, sd = pop$sigma), add = TRUE, col = "steelblue", lwd = 2)
+legend("topright", c("Simulated share", "True probability", "Normal with same mean and SD"),
+       col = c("gray60", "firebrick", "steelblue"), lwd = c(8, 2, 2), lty = c(1, NA, 1), pch = c(NA, 4, NA), bty = "n")
+
+data.frame(value = 0:5, trueProb = round(trueProb, 5), simulatedShare = share)
+
+data.frame(
+  quantity    = c("mean", "sd", "skewness", "excess kurtosis"),
+  theoretical = c(pop$mu, pop$sigma, pop$gamma1, pop$gamma2),
+  simulated   = c(mean(popDraws), sd(popDraws), skewness(popDraws), exKurtosis(popDraws))
+)
+```
+
+`r round(100 * trueProb[1], 1)` percent of all draws are 0 and `r round(100 * trueProb[2], 1)` percent are 1; values of 4 or 5 are so rare
+(`r round(100 * sum(trueProb[5:6]), 3)` percent together) that they hardly ever appear. The normal curve with the same mean and SD puts
+`r round(100 * pnorm(-0.5, mean = pop$mu, sd = pop$sigma), 1)` percent of its area below −0.5, that is on negative counts, which are impossible.
+
+To check that my 100,000 draws behave like this population, I ran a chi square test against the true probabilities.
+The values 3, 4 and 5 are so rare that their expected counts are too small for the test (the expected count for 5 is
+only `r round(100000 * trueProb[6], 1)`), so I combined them into one group "3 or more".
+
+```{r}
+#| label: populationCheck
+observed <- c(table(factor(popDraws, levels = 0:5))[1:3], sum(popDraws >= 3))
+names(observed) <- c("0", "1", "2", "3 or more")
+expectedProb <- c(trueProb[1:3], sum(trueProb[4:6]))
+popTest <- chisq.test(observed, p = expectedProb)
+data.frame(group = names(observed), observed = as.numeric(observed), expected = round(100000 * expectedProb, 1))
+popTest
+```
+
+The test did not reject the true probabilities (p = `r round(popTest$p.value, 3)`), so my draws are a typical sample from Binomial(5, 0.1).
+
+# 2. What did you expect before running the simulation?
+
+Binomial(5, 0.1) has both difficulties I met before at the same time: the discreteness of the die (02die.qmd) and the
+skewness of the exponential (03exponential.qmd). I estimated how each of them affects the sampling distribution of the
+mean, and predicted the smallest n that passes my standard from that.
+
+## Center and spread
+
+The CLT formulas for the mean and the standard error only need independent draws from the same distribution with a
+finite variance, and this population meets all three. So I expected the mean of the sample means to be 0.5 and their
+SD to be sigma / sqrt(n) = `r round(pop$sigma, 3)` / sqrt(n) at every n, even at n = 1.
+
+## The n at which each check should pass
+
+I used the formulas from my earlier files to find the n at which each check should reach my standard.
+
+```{r}
+#| label: prediction
+skewN <- predictedN(pop$gamma1)
+kurtN <- ceiling(pop$gamma2 / criteria$kurt)
+dieStep <- 1 / (populations$die$sigma * sqrt(8))
+gapN <- ceiling((1 / (pop$sigma * dieStep))^2)
+c(skewN = skewN, kurtN = kurtN, gapN = gapN)
+```
+
+* Skewness: averaging shrinks it to gamma1 / sqrt(n). To meet my cutoff of `r criteria$skew` I need `r round(pop$gamma1, 3)` / sqrt(n) ≤ `r criteria$skew`, so
+  n ≥ (`r round(pop$gamma1, 3)` / `r criteria$skew`)² ≈ `r skewN`.
+* Kurtosis: it shrinks faster, like gamma2 / n. `r round(pop$gamma2, 3)` / n ≤ `r criteria$kurt` already holds from n = `r kurtN`.
+* QQ correlation (the size of the gaps): the possible values of the mean are 1 / n apart, and for the gaps to disappear
+  in the QQ plot they have to be small compared with the standard error. In SE units the gap is
+  (1 / n) / (sigma / sqrt(n)) = 1 / (sigma × sqrt(n)) = 1 / (`r round(pop$sigma, 3)` × sqrt(n)). In 02die.qmd the QQ check passed when the gap was
+  `r round(dieStep, 3)` SE (at n = 8). Using the same standard, 1 / (`r round(pop$sigma, 3)` × sqrt(n)) ≤ `r round(dieStep, 3)` gives n ≥ (1 / (`r round(pop$sigma, 3)` × `r round(dieStep, 3)`))² ≈ `r gapN`.
+
+## My prediction and n = 30
+
+The largest of the three, n = `r gapN`, should be the bottleneck, so I predicted that the gaps would decide the answer at
+about n = `r gapN`.
+
+I did not expect the rule of thumb n = 30 to be enough. At n = 30 the formula gives a skewness of
+`r round(pop$gamma1 / sqrt(30), 3)`, above my cutoff of `r criteria$skew`, and a gap of `r round(1 / (pop$sigma * sqrt(30)), 3)` SE, larger than the `r round(dieStep, 3)` SE at which the die passed, so I
+expected visible steps in the QQ plot.
+
+## Tails at n = 1
+
+At n = 1 the sample mean is a single draw. Even the smallest value, 0, is only `r round(0.5 / pop$sigma, 2)` SDs below the mean of 0.5, so
+nothing can fall in the lower tail beyond −1.96 SDs. On the right, every value of 2 or more is in the upper tail,
+`r round(100 * sum(trueProb[3:6]), 2)` percent of the draws. So I expected tail shares of 0 and about 8 percent at n = 1.
+
+## Why my prediction might be wrong
+
+If n = `r gapN` is wrong, I expected the true answer to be larger. The prediction borrows the QQ standard from the die, which
+was symmetric. Binomial(5, 0.1) has steps and a strong right skew at the same time, so two things lower its QQ
+correlation instead of one, and the gaps may have to become smaller than they did for the die before the QQ check
+passes.
+
+## The exact distribution
+
+The sum of n independent Binomial(5, 0.1) draws is Binomial(5n, 0.1), so the exact distribution of the sample mean is
+Binomial(5n, 0.1) / n. As in 02die.qmd, I used it to see what the formulas miss, without any simulation.
+
+```{r}
+#| label: exactBinom
+exactBinomMean <- function(n) {
+  data.frame(value = (0:(5 * n)) / n, prob = dbinom(0:(5 * n), size = 5 * n, prob = 0.1))
+}
+exactN <- c(1, 5, 10, 30, skewN, 50, 100)
+exactTable <- do.call(rbind, lapply(exactN, function(n) {
+  e <- exactBinomMean(n)
+  d <- e$value - sum(e$value * e$prob)
+  v <- sum(d^2 * e$prob)
+  se <- pop$sigma / sqrt(n)
+  data.frame(n = n,
+             stepInSE = (1 / n) / se,
+             formulaSkew = pop$gamma1 / sqrt(n),
+             exactSkew = sum(d^3 * e$prob) / v^1.5,
+             largestCdfGap = cdfGap(e$value, e$prob, pop$mu, se),
+             withCorrection = cdfGap(e$value, e$prob, pop$mu, se, shift = 1 / (2 * n)))
+}))
+knitr::kable(exactTable, digits = 4)
+```
+
+The exact skewness equals the formula, so the formula is right about the skewness. `largestCdfGap` is the largest
+vertical distance between the exact CDF of the mean and the normal CDF, and `withCorrection` is the same distance when
+the normal CDF is evaluated half a step to the right (a continuity correction). At n = 30 the normal approximation can
+be off by `r round(100 * exactTable$largestCdfGap[exactTable$n == 30], 1)` percentage points without the correction and `r round(100 * exactTable$withCorrection[exactTable$n == 30], 1)` with it. For the die at n = 8 the
+correction removed almost all of the gap; here a part stays, because the binomial mean is also skewed.
+
+# 3. Which sample sizes did you investigate?
+
+## Coarse grid, then a finer grid
+
+My two predictions were n = `r skewN` (skewness) and n = `r gapN` (gaps), so I made the coarse grid dense from 20 to 50 and
+spread out elsewhere: `r paste(pop$coarse, collapse = ", ")`. Then the code added values between the last failing and the
+first passing n.
+
+```{r}
+#| label: simulate
+res <- analyzePopulation(pop)
+tab <- res$table
+nStar <- smallestN(tab)
+added <- setdiff(tab$n, pop$coarse)
+showTable(tab)
+```
+
+The finer grid added `r paste(added, collapse = ", ")`.
+
+## Which check failed?
+
+```{r}
+#| label: whichFailed
+failTable <- data.frame(
+  n = tab$n,
+  skewOK = abs(tab$skew) <= criteria$skew,
+  kurtOK = abs(tab$exKurt) <= criteria$kurt,
+  qqOK = tab$qqCor >= criteria$qqCor
+)
+knitr::kable(failTable)
+skewPass <- smallestN(tab, modifyList(criteria, list(qqCor = 0, kurt = Inf)))
+qqPass <- smallestN(tab, modifyList(criteria, list(skew = Inf, kurt = Inf)))
+```
+
+Looking at each check on its own (the smallest n from which that check passed for every larger n):
+
+* skewness: from n = `r skewPass` (prediction `r skewN`)
+* QQ correlation: from n = `r qqPass` (prediction from the gaps `r gapN`)
+* kurtosis passed at every n, as expected from `r round(pop$gamma2, 3)` / n.
+
+So the skewness check passed close to its prediction, but the QQ check needed much larger n and decided the answer.
+
+## Is it the gaps or the skewness?
+
+The QQ correlation can be low because of the gaps or because of the skewness. As in 02die.qmd, I separated them with
+two extra versions:
+
+* Binomial with the gaps filled in: each sample mean plus a uniform random amount between −1 / (2n) and 1 / (2n).
+  The gaps disappear, but the skewness stays.
+* A continuous population with the same skewness: a gamma distribution with shape
+  (2 / `r round(pop$gamma1, 3)`)² = `r round((2 / pop$gamma1)^2, 3)` has skewness `r round(pop$gamma1, 3)`, like the binomial, but no gaps.
+
+```{r}
+#| label: gapsOrSkew
+gapGrid <- c(5, 10, 20, 30, 40, 50, 60, 70, 100, 200)
+gammaShape <- (2 / pop$gamma1)^2
+gammaGen <- function(n) rgamma(n, shape = gammaShape, rate = 1)
+gapsOrSkew <- do.call(rbind, lapply(gapGrid, function(n) {
+  set.seed(student_id)
+  binMeans <- simMeans(pop$generator, n)
+  filled <- binMeans + runif(num, -1 / (2 * n), 1 / (2 * n))
+  set.seed(student_id)
+  gamMeans <- simMeans(gammaGen, n)
+  data.frame(n = n,
+             qqBinom = qqCorrelation(binMeans),
+             qqFilled = qqCorrelation(filled),
+             qqGamma = qqCorrelation(gamMeans),
+             skewBinom = skewness(binMeans),
+             skewFilled = skewness(filled),
+             exKurtFilled = exKurtosis(filled))
+}))
+knitr::kable(gapsOrSkew, digits = 4)
+filledTab <- data.frame(n = gapGrid, skew = gapsOrSkew$skewFilled,
+                        exKurt = gapsOrSkew$exKurtFilled, qqCor = gapsOrSkew$qqFilled)
+filledN <- smallestN(filledTab)
+filledQQ <- smallestN(filledTab, modifyList(criteria, list(skew = Inf, kurt = Inf)))
+gammaQQ <- smallestN(data.frame(n = gapGrid, skew = 0, exKurt = 0, qqCor = gapsOrSkew$qqGamma))
+```
+
+Without the gaps, the QQ check passed from n = `r filledQQ` (filled in binomial) and n = `r gammaQQ` (gamma), and the filled in
+binomial passed all my checks from n = `r filledN`, where the skewness check decides. With the gaps, the QQ check needed
+n = `r qqPass`. So the skewness of the binomial alone would give an answer near the skewness prediction; the gaps are what
+pushed it up to n = `r nStar`.
+
+## Choosing my QQ cutoff again
+
+```{r}
+#| label: qqCompare
+qqValues <- c(0.995, 0.998, 0.999)
+qqCompare <- data.frame(
+  qqCut = qqValues,
+  chosenN = sapply(qqValues, function(q) smallestN(tab, modifyList(criteria, list(qqCor = q))))
+)
+knitr::kable(qqCompare)
+```
+
+With 0.995 the answer is `r qqCompare$chosenN[1]` on this grid, the same as the skewness answer. With 0.998 it is `r qqCompare$chosenN[2]` and with
+0.999 it is `r qqCompare$chosenN[3]`. The 0.995 value is limited by the grid, which has no n between 30 and 40; when I set
+qqCor = 0.995 and reran the whole search, the finer grid gave n = 35 (see experimentLog.md), close to the skewness
+prediction of `r skewN`. As on the die, the QQ cutoff decides how much discreteness I accept. I kept 0.998 for every population.
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+```{r}
+#| label: summaryNumbers
+star     <- tab[tab$n == nStar, ]
+lastFail <- tab[tab$n == max(tab$n[tab$n < nStar & !tab$normalEnough]), ]
+failed   <- c(skewness = abs(lastFail$skew) > criteria$skew,
+              kurtosis = abs(lastFail$exKurt) > criteria$kurt,
+              QQ = lastFail$qqCor < criteria$qqCor)
+nearStar <- tab[tab$n >= 60 & tab$n <= nStar, c("n", "qqCor")]
+at1      <- tab[tab$n == 1, ]
+at30     <- tab[tab$n == 30, ]
+seRange  <- range(tab$seRatio)
+meanGapZ <- abs(tab$simMean - tab$theoMean) / (tab$theoSE / sqrt(num))
+```
+
+My predictions were n = `r skewN` from the skewness and about n = `r gapN` from the gaps; the simulation gave n = `r nStar`.
+Both checks matter here, so the plot shows both.
+
+```{r}
+#| label: whyN
+#| fig.width: 11
+#| fig.height: 4.8
+old <- par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+zoom <- tab[tab$n >= 10 & tab$n <= 200, ]
+nLine <- exp(seq(log(10), log(200), length.out = 300))
+plot(zoom$n, zoom$skew, log = "x", pch = ifelse(zoom$normalEnough, 16, 4), lwd = 2,
+     col = ifelse(zoom$normalEnough, "steelblue", "firebrick"), ylim = c(0, 0.45),
+     xlab = "Sample size n (log scale)", ylab = "Skewness of the sample means",
+     main = "Skewness passes near the prediction")
+lines(nLine, pop$gamma1 / sqrt(nLine), lwd = 2)
+abline(h = criteria$skew, col = "firebrick", lty = 2, lwd = 2)
+abline(v = c(skewN, nStar), col = c("darkorange", "steelblue"), lty = 3, lwd = 2)
+legend("topright", c(paste0("Prediction ", round(pop$gamma1, 2), " / sqrt(n)"), paste("Cutoff", criteria$skew),
+                     paste("Skewness prediction n =", skewN), paste("Chosen n =", nStar),
+                     "Passed all checks", "Failed a check"),
+       col = c("black", "firebrick", "darkorange", "steelblue", "steelblue", "firebrick"),
+       lty = c(1, 2, 3, 3, NA, NA), lwd = 2, pch = c(NA, NA, NA, NA, 16, 4), bty = "n", cex = 0.8)
+
+plot(NULL, xlim = range(gapGrid), ylim = c(0.97, 1), log = "x",
+     xlab = "Sample size n (log scale)", ylab = "QQ correlation",
+     main = "The gaps keep the QQ correlation low")
+lines(gapsOrSkew$n, gapsOrSkew$qqGamma, col = "gray50", lwd = 2, lty = 2)
+lines(gapsOrSkew$n, gapsOrSkew$qqFilled, col = "steelblue", lwd = 2, type = "o", pch = 16)
+lines(gapsOrSkew$n, gapsOrSkew$qqBinom, col = "black", lwd = 2, type = "o", pch = 16)
+abline(h = criteria$qqCor, col = "firebrick", lty = 2, lwd = 2)
+abline(v = nStar, col = "steelblue", lty = 3, lwd = 2)
+legend("bottomright", c("Binomial", "Binomial with gaps filled in", "Gamma, same skewness",
+                        paste("Cutoff", criteria$qqCor), paste("Chosen n =", nStar)),
+       col = c("black", "steelblue", "gray50", "firebrick", "steelblue"),
+       lty = c(1, 1, 2, 2, 3), lwd = 2, pch = c(16, 16, NA, NA, NA), bty = "n", cex = 0.8)
+par(old)
+```
+
+Left: the skewness follows the prediction `r round(pop$gamma1, 2)` / sqrt(n) and drops below my cutoff around n = `r skewN`. Right: without
+the gaps (blue and gray) the QQ correlation passes my cutoff early, but the real binomial (black) only reaches it near
+n = `r nStar`. The red crosses on the left between n = `r skewPass` and n = `r lastFail$n` are sample sizes where the skewness was already
+fine but the QQ check failed.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+```{r}
+#| label: sePlot
+plotSE(tab, label = "Binomial")
+```
+
+Center: the simulated mean was within 2 Monte Carlo standard errors of 0.5 at `r sum(meanGapZ <= 2)` of `r nrow(tab)` sample sizes, with
+a largest gap of `r round(max(meanGapZ), 2)` (at n = `r tab$n[which.max(meanGapZ)]`). Even with 24 independent checks, about 5 percent (1 or 2) would be
+above 2 by chance, and these rows are not independent: they share one random stream, which is also why the mean was
+below 0.5 at `r sum(tab$simMean < 0.5)` of `r nrow(tab)` sample sizes. So I do not read this as a failure of the formula mu = 0.5.
+
+Spread: the SE ratio stayed between `r round(seRange[1], 3)` and `r round(seRange[2], 3)`, and `r sum(tab$seOK)` of `r nrow(tab)` sample sizes passed my
+5 percent SE check, including n = 1.
+
+# 6. Why did you choose that value?
+
+As for the die, I set the histogram breaks halfway between the possible values of the mean (1 / n apart), so each bar
+holds exactly one possible value. The red curve is the normal density with mean 0.5 and SD sigma / sqrt(n).
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotLattice(res, nShow = unique(c(1, 5, 30, nStar)), mu = pop$mu, theoSE = iidSE(pop$sigma), label = pop$label)
+```
+
+At n = 1 most of the mass is at 0 and the QQ plot is a few flat steps. At n = 5 the histogram is still clearly right
+skewed and cut off at 0. At n = 30 the histogram looks roughly bell shaped, but the QQ plot still lies above the line at both ends, the
+same bend that the exponential showed (a short left tail and a long right tail), and it still has visible steps. At
+n = `r nStar` the bars follow the curve, the QQ plot is close to the line, and the steps are small.
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Binomial")
+```
+
+The skewness follows the red prediction `r round(pop$gamma1, 2)` / sqrt(n), and the kurtosis is small at every n.
+
+Is n = 30 enough? At n = 30 the skewness was `r round(at30$skew, 3)` (just above my cutoff), the QQ correlation was
+`r round(at30$qqCor, 4)`, and the tail shares beyond ±1.96 were `r round(100 * at30$tailLow, 2)` and `r round(100 * at30$tailHigh, 2)` percent instead of 2.5 and 2.5.
+So under my standard n = 30 is not enough for this population, mainly because of the gaps.
+
+To see what this means for an actual probability, I computed the chance that the mean of 30 draws is above 0.6 (a
+sum of 19 or more) in three ways: exactly from Binomial(150, 0.1), with the plain normal approximation, and with the
+normal approximation evaluated half a step to the right (a sum of 18.5, a continuity correction).
+
+```{r}
+#| label: probAt30
+se30 <- pop$sigma / sqrt(30)
+probAt30 <- c(exact = 1 - pbinom(18, size = 150, prob = 0.1),
+              normal = 1 - pnorm(0.6, mean = pop$mu, sd = se30),
+              corrected = 1 - pnorm(0.6 + 1 / 60, mean = pop$mu, sd = se30))
+round(probAt30, 4)
+```
+
+The plain normal approximation gives `r round(100 * probAt30["normal"], 1)` percent instead of `r round(100 * probAt30["exact"], 1)` percent, an error of
+`r round(100 * (probAt30["normal"] - probAt30["exact"]), 1)` percentage points. With the correction it gives `r format(round(100 * probAt30["corrected"], 1), nsmall = 1)` percent. So at n = 30 the
+plain approximation is clearly off, and most of the error comes from the gaps.
+
+Shapiro Wilk rejected normality at `r sum(tab$swP < 0.05)` of `r nrow(tab)` sample sizes, even where all my checks passed. As in the other files, I report
+it but do not use it to decide: with 5,000 values it rejects very small departures, and a variable with gaps is very hard
+for it to pass.
+
+I chose n = `r nStar` because:
+
+* At n = `r nStar` the skewness was `r round(star$skew, 3)`, the excess kurtosis `r round(star$exKurt, 3)` and the QQ correlation
+  `r round(star$qqCor, 4)`, all within my cutoffs, and every larger n I tested also passed.
+* At the largest n that still failed (n = `r lastFail$n`), the check that failed was `r paste(names(failed)[failed], collapse = " and ")`
+  (QQ correlation `r round(lastFail$qqCor, 4)`).
+* The gaps or skewness experiment showed that the QQ failures after the skewness passed come from the gaps.
+* Near the boundary the QQ correlation rose very slowly: `r paste0(format(round(nearStar$qqCor, 5), nsmall = 5), " at n = ", nearStar$n, collapse = ", ")`. The
+  cutoff is crossed in this flat part, so the exact boundary is sensitive to noise.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    "Mean of the sample means equals 0.5 (about 95 percent of n within 2 Monte Carlo SEs)",
+    "SE equals sigma / sqrt(n) at every n, including n = 1",
+    paste0("Tails 0 and about ", round(100 * sum(trueProb[3:6]), 1), " percent at n = 1"),
+    paste("Skewness check passes at about n =", skewN),
+    paste("Gaps decide; QQ check passes at about n =", gapN),
+    "n = 30 close but not enough"
+  ),
+  Result = c(
+    paste0("Within 2 Monte Carlo SEs at ", sum(meanGapZ <= 2), " of ", nrow(tab), " n (", round(100 * mean(meanGapZ <= 2)), "%)"),
+    paste0("SE ratio ", round(seRange[1], 3), " to ", round(seRange[2], 3), "; ", sum(tab$seOK), " of ", nrow(tab), " passed"),
+    paste0(round(100 * at1$tailLow, 2), "% and ", round(100 * at1$tailHigh, 2), "%"),
+    paste("Skewness passed from n =", skewPass),
+    paste("QQ passed from n =", qqPass, "; answer n =", nStar),
+    paste0("Skewness ", round(at30$skew, 3), ", QQ ", round(at30$qqCor, 4))
+  ),
+  Match = c(ifelse(mean(meanGapZ <= 2) >= 0.9, "Same", "Different"), "Same", "Same",
+            "Same",
+            "Different", "Same")
+)
+knitr::kable(predictionCheck)
+```
+
+Using what I learned from the die, I predicted that the gaps would decide, and they did. But the size of the
+effect surprised me: I expected about n = `r gapN` and the answer was n = `r nStar`. I had noted that the skewness could make it
+larger, but not by this much. My guess assumed the binomial needs the same
+step size as the die, but the binomial is also skewed, and skewness lowers the QQ correlation too (the gamma, with no
+gaps at all, needed n = `r gammaQQ` for the QQ check alone). The two effects add up, so the binomial needed smaller steps than the
+die.
+
+To test this explanation, I changed p from 0.1 to 0.5 in the Console. Binomial(5, 0.5) is symmetric, so only the gaps
+are left, and the same step size rule predicted n = 19. The answer was exactly n = 19 (see experimentLog.md). So
+when there is no skewness the step size rule works, and the extra n for p = 0.1 comes from the skewness.
+
+The second surprise was how different the three non normal populations are. The binomial has a smaller skewness than the
+exponential (`r round(pop$gamma1, 2)` against 2), so the skewness formula says it should converge almost three times faster (n = `r skewN`
+against 100). The answers were n = `r nStar` and n = 100, much closer than the formula suggests, because the binomial
+pays for its gaps. The die had no skewness and small gaps and needed only n = 8. Every population failed for a
+different reason, so no single rule like n = 30 fits all of them.
+
+## Limitations
+
+* My answer depends on the QQ cutoff: `r qqCompare$chosenN[1]` with 0.995 and `r qqCompare$chosenN[3]` with 0.999 on this grid. These two values are
+  limited by the grid; a full search with 0.995 gave 35, so the 0.999 value could also be smaller than `r qqCompare$chosenN[3]`.
+* My QQ check judges the normal approximation without a continuity correction. With the correction, the largest CDF gap
+  at n = 30 drops from `r round(100 * exactTable$largestCdfGap[exactTable$n == 30], 1)` to `r round(100 * exactTable$withCorrection[exactTable$n == 30], 1)` percentage points, so for probability calculations with a correction a
+  smaller n might be good enough.
+* The boundary is uncertain: from n = `r min(nearStar$n)` to n = `r nStar` the QQ correlation changed only in the fourth decimal, so a
+  different seed could move the answer by a few n.
+* The gamma comparison uses a different kurtosis (`r round(6 / gammaShape, 2)` instead of `r round(pop$gamma2, 2)`), so it matches the binomial's skewness
+  but not its whole shape.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.
