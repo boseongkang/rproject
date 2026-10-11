@@ -1,0 +1,333 @@
+---
+title: "CLT Experiment 5"
+subtitle: "Cauchy Population"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+pop <- populations$cauchy
+```
+
+# 1. What population are you sampling from?
+
+The Cauchy distribution with location 0 and scale 1 has density f(x) = 1 / (π (1 + x²)). One way to picture it: a
+lighthouse 1 km off a straight coast spins and flashes at a random angle; the point on the coast where the beam hits is
+Cauchy distributed. Most hits are near the point straight ahead, but when the beam is almost parallel to the coast it
+lands extremely far away.
+
+Near the center it looks like a bell curve: it is symmetric, its median is 0, and its quartiles are −1 and 1 (so its
+interquartile range, IQR, is 2). But its tails are so heavy that the mean and the variance do not exist: the integrals
+that define them do not converge. So the third CLT assumption, a finite variance, fails. The draws are still
+independent and identically distributed.
+
+```{r}
+#| label: population
+#| fig.width: 7
+#| fig.height: 4.5
+set.seed(student_id)
+popDraws <- pop$generator(100000)
+
+hist(popDraws[abs(popDraws) < 10], breaks = 80, probability = TRUE, col = "gray85", border = "white",
+     main = "Cauchy(0, 1) population (values between -10 and 10)", xlab = "Individual value")
+curve(dcauchy(x) / (2 / pi * atan(10)), add = TRUE, col = "firebrick", lwd = 2)
+curve(dnorm(x), add = TRUE, col = "steelblue", lwd = 2, lty = 2)
+legend("topright", c("Cauchy(0, 1) density (within -10 to 10)", "N(0, 1) density"),
+       col = c("firebrick", "steelblue"), lwd = 2, lty = c(1, 2), bty = "n")
+
+data.frame(
+  quantity = c("lower quartile", "median", "upper quartile", "share beyond +/- 10", "largest |value|"),
+  theoretical = c(-1, 0, 1, 1 - 2 / pi * atan(10), Inf),
+  simulated = c(quantile(popDraws, 0.25), median(popDraws), quantile(popDraws, 0.75),
+                mean(abs(popDraws) > 10), max(abs(popDraws)))
+)
+```
+
+The quartiles and the median match the theory. The histogram only shows values between −10 and 10 (so I scaled the
+red Cauchy curve to that window), because
+`r round(100 * mean(abs(popDraws) > 10), 1)` percent of the draws are further out, and the largest one is `r format(round(max(abs(popDraws))), big.mark = ",")` away from 0.
+
+How heavy are the tails? I compared the chance of a value further than k from 0 with a standard normal.
+
+```{r}
+#| label: tailCompare
+k <- c(2, 3, 5, 10, 100)
+tailCompare <- data.frame(
+  k = k,
+  cauchy = 1 - 2 / pi * atan(k),
+  normal = 2 * (1 - pnorm(k))
+)
+knitr::kable(signif(tailCompare, 3))
+```
+
+A Cauchy value is further than 3 from the center `r round(100 * tailCompare$cauchy[k == 3], 1)` percent of the time, compared with
+`r round(100 * tailCompare$normal[k == 3], 2)` percent for a normal, and it is further than 100 about `r round(100 * tailCompare$cauchy[k == 100], 2)` percent of the time, which
+a normal value essentially never is.
+
+# 2. What did you expect before running the simulation?
+
+In 02die.qmd, 03exponential.qmd and 04binomial.qmd the sampling distribution of the mean moved closer to a normal
+distribution as n grew. The Cauchy breaks one of the CLT assumptions, so I expected a completely different result.
+
+## The sample mean: no n works
+
+The Cauchy has tails so heavy that its mean and variance do not exist. The draws are still independent and identically
+distributed, but the CLT also needs a finite variance, and that assumption fails. From this I expected:
+
+* The shape never changes. A known result is that the mean of n independent Cauchy(0, 1) values is again
+  Cauchy(0, 1). So the distribution of the sample mean should not get any narrower, and it should look the same at
+  n = 1 and at n = 3,000.
+* The spread and the tail share stay fixed. With no population variance, the formula sigma / sqrt(n) does not work.
+  The IQR of the sample means should stay at the theoretical value of 2 however large n is, and the chance that a
+  sample mean is further than 10 from 0 should stay at 1 − (2 / π) arctan(10) ≈ `r round(100 * (1 - 2 / pi * atan(10)), 1)` percent for every n.
+* My checks break down. Because the theoretical moments do not exist, the simulated SD, skewness and kurtosis of the
+  sample means should not settle on any value; they should jump around each time an extreme value appears.
+* The QQ plot and the running mean never settle. In 02die.qmd the share of each face moved steadily toward 1/6 as the
+  rolls came in. For the Cauchy I expected the running mean of one long sequence to keep jumping, because a single
+  huge value can pull the whole average, and I expected the QQ plot to stay far off the line at both ends at every n.
+
+So for the sample mean I expected that no n would work.
+
+## The sample median: should become normal
+
+Unlike the mean, the sample median is not affected by the extreme values in the tails; how much it varies depends on
+the density near the center of the distribution. A known large sample result for sample quantiles (similar in spirit to
+the CLT) says the median becomes approximately normal as n grows, with standard error
+
+$$\text{SE(median)} \approx \frac{1}{2 f(0) \sqrt{n}}.$$
+
+For the standard Cauchy the density at the center is f(0) = 1 / π = `r round(dcauchy(0), 3)`, so the SE should be about π / (2 sqrt(n)) and
+shrink as n grows (for example `r round(pi / (2 * sqrt(100)), 3)` at n = 100).
+
+I had no formula for the n at which the median would pass my standard. The Cauchy has very heavy tails, but it is
+perfectly symmetric, and in 02die.qmd a symmetric population became normal quickly. So I expected the median to become
+normal fairly fast, and borrowing the usual rule of thumb, I guessed somewhere between n = 30 and n = 40.
+
+In short: the sample mean should never pass my normality checks however large n is, but the sample median should pass
+the QQ correlation, skewness and kurtosis checks from some n on.
+
+# 3. Which sample sizes did you investigate?
+
+## The sample mean
+
+Because I expected the answer "never", I chose a grid that goes far beyond the usual range, up to n = 3,000:
+`r paste(pop$coarse, collapse = ", ")`. If even n = 3,000 does not help, a larger n will not either.
+
+```{r}
+#| label: simulate
+res <- analyzePopulation(pop)
+tab <- res$table
+nStar <- smallestN(tab)
+showTable(tab)
+```
+
+The columns seRatio, theoMean and predSkew are empty (NA) because the theoretical mean, SD and skewness do not exist.
+The sample SD, skewness and kurtosis are numbers that can always be computed, but they jump around: the SD of the
+means ranged from `r round(min(tab$simSD))` to `r format(round(max(tab$simSD)), big.mark = ",")`, the skewness from `r round(min(tab$skew))` to `r round(max(tab$skew))`. No n passed my checks.
+
+Since the moments do not exist, I also looked at summaries that do exist for a Cauchy distribution: the median, the
+quartiles, and the share of means beyond ±10.
+
+```{r}
+#| label: robust
+robust <- data.frame(
+  n = tab$n,
+  medianOfMeans = sapply(res$means, median),
+  lowerQuartile = sapply(res$means, function(m) quantile(m, 0.25)),
+  upperQuartile = sapply(res$means, function(m) quantile(m, 0.75)),
+  iqrOfMeans = sapply(res$means, IQR),
+  shareBeyond10 = sapply(res$means, function(m) mean(abs(m) > 10)),
+  largestAbsMean = sapply(res$means, function(m) max(abs(m)))
+)
+knitr::kable(robust, digits = 3, row.names = FALSE)
+```
+
+## The sample median
+
+To check my prediction about the median, I ran the same search with the sample median instead of the mean. The
+theoretical standard error here is the large n formula π / (2 sqrt(n)).
+
+```{r}
+#| label: medianSearch
+medianRes <- searchN(NULL, c(1, 3, 5, 10, 20, 30, 50, 100, 200, 300), mu = 0,
+                     theoSE = function(n) pi / (2 * sqrt(n)),
+                     pred = function(n) c(skew = NA, kurt = NA),
+                     meansFun = function(n, reps) replicate(reps, median(rcauchy(n))))
+medianTab <- medianRes$table
+medianN <- smallestN(medianTab)
+knitr::kable(medianTab[, c("n", "simMean", "simSD", "theoSE", "seRatio", "skew", "exKurt", "qqCor", "normalEnough")],
+             digits = 4, row.names = FALSE)
+```
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{\text{No } n \text{ works for the sample mean}}$$
+
+```{r}
+#| label: summaryNumbers
+iqrRange <- range(robust$iqrOfMeans)
+qqRange <- range(tab$qqCor)
+beyondRange <- range(robust$shareBeyond10)
+medianStar <- medianTab[medianTab$n == medianN, ]
+```
+
+The sample mean never became approximately normal: at every n from 1 to 3,000 its IQR stayed between
+`r round(iqrRange[1], 2)` and `r round(iqrRange[2], 2)`, the value 2 of a single Cauchy draw, and its QQ correlation stayed between `r round(qqRange[1], 3)` and
+`r round(qqRange[2], 3)`, far below my cutoff of `r criteria$qqCor`. The sample median, on the other hand, became approximately normal at
+n = `r medianN`.
+
+```{r}
+#| label: whyNoN
+#| fig.width: 10
+#| fig.height: 5
+nAll <- sort(unique(c(tab$n, medianTab$n)))
+plot(NULL, xlim = range(nAll), ylim = c(0.01, 5), log = "xy",
+     xlab = "Sample size n (log scale)", ylab = "IQR (log scale)",
+     main = "The spread of the mean never shrinks; the spread of the median does")
+lines(robust$n, robust$iqrOfMeans, type = "o", pch = 16, lwd = 2, col = "firebrick")
+lines(medianTab$n, sapply(medianRes$means, IQR), type = "o", pch = 16, lwd = 2, col = "steelblue")
+nLine <- exp(seq(log(1), log(3000), length.out = 200))
+lines(nLine, 2 * qnorm(0.75) * pi / (2 * sqrt(nLine)), lty = 2, col = "steelblue")
+abline(h = 2, lty = 2, col = "firebrick")
+legend("bottomleft", c("IQR of the sample means", "IQR = 2 (one Cauchy draw)", "IQR of the sample medians",
+                       "Normal theory for the median"),
+       col = c("firebrick", "firebrick", "steelblue", "steelblue"), lty = c(1, 2, 1, 2), pch = c(16, NA, 16, NA),
+       lwd = c(2, 1, 2, 1), bty = "n")
+```
+
+How to read it: if averaging helped, the red line would fall like the blue one. Instead it stays flat at 2 for every n.
+The dashed blue line is the IQR a normal distribution with SE π / (2 sqrt(n)) would have; the medians follow it once n
+is not small.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+There is no theoretical mean or standard error to compare with, so the usual comparison is impossible. What I can
+compare is the behaviour:
+
+* The median of the sample means stayed between `r round(min(robust$medianOfMeans), 3)` and `r round(max(robust$medianOfMeans), 3)`, close to the center 0, but the
+  average of the 10,000 sample means (simMean) ranged from `r round(min(tab$simMean), 2)` to `r round(max(tab$simMean), 2)` and does not settle on any value.
+* The SD of the sample means did not shrink like 1 / sqrt(n). It was `r round(tab$simSD[tab$n == 1])` at n = 1 and `r round(tab$simSD[tab$n == 3000])` at
+  n = 3,000, with values as large as `r format(round(max(tab$simSD)), big.mark = ",")` in between, set by single extreme draws.
+
+```{r}
+#| label: runningMean
+#| fig.width: 9
+#| fig.height: 4.5
+runningMean <- cumsum(popDraws) / seq_along(popDraws)
+plot(runningMean, type = "l", log = "x", xaxt = "n",
+     xlab = "Number of draws (log scale)", ylab = "Running mean",
+     main = paste0("Running mean of 100,000 Cauchy draws (seed ", student_id, ")"))
+axis(1, at = c(1, 10, 100, 1000, 10000, 100000), labels = c("1", "10", "100", "1,000", "10,000", "100,000"))
+abline(h = 0, col = "firebrick", lty = 2)
+jumpAt <- which.max(abs(diff(runningMean)))
+lateJump <- 10000 + which.max(abs(diff(runningMean))[-(1:10000)])
+```
+
+The running mean of one long sequence does not settle down. The largest single jump happened at draw
+`r format(jumpAt + 1, big.mark = ",")`, where one value of `r format(round(popDraws[jumpAt + 1]), big.mark = ",")` moved the mean of all draws so far from
+`r round(runningMean[jumpAt], 2)` to `r round(runningMean[jumpAt + 1], 2)`. Even after 10,000 draws the mean still jumped: the largest jump after draw
+10,000 was at draw `r format(lateJump + 1, big.mark = ",")`, by `r round(abs(diff(runningMean))[lateJump], 2)`. For a population with a finite mean, this curve would flatten out (as the
+shares of a die did in 02die.qmd).
+
+# 6. Why did you choose that value?
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+old <- par(mfrow = c(2, 4), mar = c(4, 4, 3, 1))
+for (n in c(1, 30, 1000, 3000)) {
+  m <- res$means[[as.character(n)]]
+  hist(m[abs(m) < 10], breaks = 60, probability = TRUE, col = "gray85", border = "white",
+       main = paste0("Sample means, n = ", n), xlab = "Sample mean (between -10 and 10)", ylim = c(0, 0.4))
+  curve(dcauchy(x) / (2 / pi * atan(10)), add = TRUE, col = "firebrick", lwd = 2)
+}
+for (n in c(1, 30, 1000, 3000)) {
+  m <- res$means[[as.character(n)]]
+  qqnorm(m, main = paste("QQ plot: n =", n), pch = 16, cex = 0.3)
+  qqline(m, col = "firebrick", lwd = 2)
+}
+par(old)
+```
+
+The red curve is the same Cauchy(0, 1) density (scaled to the window from −10 to 10) in every panel, and the histograms follow it at n = 1, 30, 1,000 and
+3,000 alike. The QQ plots are flat in the middle and shoot off at both ends at every n: most means are near 0, and a
+few are enormous.
+
+I concluded that no n works for the sample mean because:
+
+* The IQR of the means stayed at about 2 at every n, so the spread did not shrink at all, as predicted by the exact
+  result that the mean of n Cauchy values is again Cauchy(0, 1).
+* The share of means beyond ±10 stayed between `r round(100 * beyondRange[1], 1)` and `r round(100 * beyondRange[2], 1)` percent at every n, close to the predicted
+  `r round(100 * (1 - 2 / pi * atan(10)), 1)` percent, so the heavy tails did not thin out.
+* The QQ correlation never came close to my cutoff, and it did not improve with n.
+* Going up to n = 3,000 made no difference, so a larger n would not help either.
+
+The reason is the heavy tail. A single draw can be so large that it outweighs all the others: the largest absolute
+sample mean at n = 100 was `r format(round(robust$largestAbsMean[robust$n == 100]), big.mark = ",")`. When one value can dominate a sum, averaging cannot cancel it out.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    "IQR of the means stays at 2 for every n",
+    "QQ correlation stays far below the cutoff at every n",
+    "SD, skewness and kurtosis of the means jump around",
+    paste0("Share beyond +/- 10 stays at about ", round(100 * (1 - 2 / pi * atan(10)), 1), " percent"),
+    "Running mean never settles",
+    "No n works for the mean",
+    "The median becomes normal at about n = 30 to 40"
+  ),
+  Result = c(
+    paste0("IQR between ", round(iqrRange[1], 2), " and ", round(iqrRange[2], 2)),
+    paste0("QQ correlation between ", round(qqRange[1], 3), " and ", round(qqRange[2], 3)),
+    paste0("SD from ", round(min(tab$simSD)), " to ", format(round(max(tab$simSD)), big.mark = ",")),
+    paste0(round(100 * beyondRange[1], 1), " to ", round(100 * beyondRange[2], 1), " percent"),
+    "Large jumps even after many thousands of draws",
+    paste("No tested n passed; smallestN gives", nStar),
+    paste("Median passed from n =", medianN)
+  ),
+  Match = c("Same", "Same", "Same", "Same", "Same", "Same",
+            ifelse(medianN >= 30 & medianN <= 40, "Same", "Different"))
+)
+knitr::kable(predictionCheck)
+```
+
+Every prediction about the mean held, which is not surprising, because they follow from an exact mathematical result.
+What still surprised me was how complete the failure looks. Knowing the result is different from seeing it: the
+histogram at n = 3,000 is the same as the histogram at n = 1. Collecting 3,000 times more data did not make the
+average any more precise, because the chance that one draw is large enough to move the mean by a given amount does
+not shrink as n grows.
+
+The second surprise was the median. Using the same population and the same standard, the median became approximately
+normal at n = `r medianN` (skewness `r round(medianStar$skew, 3)`, excess kurtosis `r round(medianStar$exKurt, 3)`, QQ correlation `r round(medianStar$qqCor, 4)`), and its SD
+was close to π / (2 sqrt(n)) (ratio `r round(medianStar$seRatio, 3)` at n = `r medianN`). So the problem is not that Cauchy data are useless; it is
+that the mean is the wrong summary for them. It did take longer than my guess of 30 to 40. The last check to pass was
+the kurtosis, not the skewness: the median is symmetric, as I expected, but its distribution has slightly heavier
+tails than a normal one for small n, and its excess kurtosis stayed a little above `r criteria$kurt` until about n = 50
+(`r round(medianTab$exKurt[medianTab$n == 30], 3)` at n = 30 and `r round(medianTab$exKurt[medianTab$n == 48], 3)` at n = 48). The symmetry made the skewness pass early, but symmetry says nothing
+about the kurtosis. Also, n = 45 passed once by luck before n = 46 and 48 failed again.
+
+Compared with my other populations, the Cauchy is the only one where the answer is not a number. For the die,
+the exponential and the binomial, the CLT worked and only the speed was different; here a CLT assumption is broken
+and no amount of data fixes it.
+
+## Limitations
+
+* "No n works" is a mathematical fact for the Cauchy mean; my simulation only illustrates it up to n = 3,000 with one
+  seed. It cannot prove anything about larger n on its own.
+* My usual checks (skewness, kurtosis, SE ratio) describe moments that do not exist here, so for the mean I relied
+  on the IQR, quartiles and tail shares instead.
+* The histograms only show sample means between −10 and 10, so they hide the extreme values; the QQ plots and
+  the table show them.
+* The theoretical SE of the median, π / (2 sqrt(n)), is a large n formula, so the SE ratio for the median is only
+  meaningful once n is not small.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.
