@@ -1,0 +1,339 @@
+---
+title: "CLT Experiment 7 (extra credit)"
+subtitle: "Basketball Shots with Fatigue (not identically distributed)"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+```
+
+# 1. What population are you sampling from?
+
+This is the fatigue example from the class handout. A player takes n shots in a game. Shot t is made (1) or missed (0)
+with probability p_t, and fatigue makes p_t fall evenly from 0.9 on the first shot to 0.5 on the last one. The shots
+are independent of each other. The sample mean is the player's shooting percentage for the game.
+
+The CLT assumptions: the shots are independent and every shot has a finite variance, but they are not identically
+distributed, because every shot has its own p_t. So this tests the second assumption.
+
+In the handout one game has 20 shots. To study how the shooting percentage behaves as n grows, I let the number of
+shots in a game be n and spread the same fatigue (0.9 down to 0.5) over those n shots.
+
+```{r}
+#| label: oneGame
+#| fig.width: 8
+#| fig.height: 4.5
+set.seed(student_id)
+nShots <- 20
+p20 <- shotProbs(nShots)
+made <- rbinom(nShots, size = 1, prob = p20)
+plot(1:nShots, p20, type = "b", pch = 19, ylim = c(0, 1), col = "firebrick",
+     xlab = "Shot number", ylab = "Probability / outcome",
+     main = paste0("One game of 20 shots (seed ", student_id, ")"))
+points(1:nShots, made, pch = 19, col = "steelblue", cex = 1.2)
+legend("bottomleft", c("Probability of a make", "Actual outcome"), col = c("firebrick", "steelblue"),
+       lty = c(1, NA), pch = 19, bty = "n")
+```
+
+In this game the player made `r sum(made)` of 20 shots, a shooting percentage of `r round(mean(made), 2)`.
+
+## Theory for any n
+
+Because the shots are independent, the mean and variance of the shooting percentage add up shot by shot:
+
+* Mean: the average of the p_t, which is (0.9 + 0.5) / 2 = 0.7 for every n of 2 or more.
+* Standard error: sqrt(Σ p_t (1 − p_t)) / n.
+* A naive analysis that pretends every shot has p = 0.7 would use sqrt(0.7 × 0.3 / n) instead.
+
+The skewness and kurtosis of a sum of independent values can also be added up (through the third and fourth
+cumulants), which gives exact formulas for the shooting percentage at every n. These are in `basketballPrediction()`
+in functions.R.
+
+```{r}
+#| label: theory
+theoryN <- c(2, 5, 10, 20, 30, 50, 100, 200)
+theory <- data.frame(
+  n = theoryN,
+  meanP = sapply(theoryN, function(n) mean(shotProbs(n))),
+  exactSE = sapply(theoryN, basketballSE),
+  naiveSE = sqrt(0.21 / theoryN),
+  ratio = sapply(theoryN, basketballSE) / sqrt(0.21 / theoryN),
+  skew = sapply(theoryN, function(n) basketballPrediction(n)["skew"]),
+  exKurt = sapply(theoryN, function(n) basketballPrediction(n)["kurt"])
+)
+knitr::kable(theory, digits = 4, row.names = FALSE)
+```
+
+The exact SE is a little smaller than the naive one, about `r round(100 * (1 - theory$ratio[theory$n == 200]), 1)` percent for large n. The reason is that p (1 − p) is largest
+at p = 0.5 and smaller for p away from 0.5, so shots with p = 0.9 or 0.8 vary less than a p = 0.7 shot. The skewness
+is negative, because most shots have p above 0.5, so a low shooting percentage is the long tail.
+
+# 2. What did you expect before running the simulation?
+
+## Does the CLT still apply?
+
+I expected the CLT to keep working even though every shot has a different p. The shots are independent, and the
+Lindeberg version of the CLT, for independent values that are not identically distributed, holds when the sum of the
+variances grows without bound and no single value dominates. Here every shot has variance p_t (1 − p_t) of at least
+0.9 × 0.1 = 0.09, so the sum of the variances keeps growing with n, and every shot is only 0 or 1, so no single shot
+can dominate.
+
+## Center and spread
+
+From the theory in section 1, I expected the mean of the shooting percentages to be 0.7 and their SD to follow the
+exact SE sqrt(Σ p_t (1 − p_t)) / n at every n. This exact SE is about `r round(100 * (1 - theory$ratio[theory$n == 200]), 1)` percent smaller than the naive SE that uses
+p = 0.7 for every shot. So the changing probabilities should shave a little off the variance, and the shooting
+percentages should gather slightly more tightly around 0.7 than for a constant p.
+
+## The n at which each check should pass
+
+```{r}
+#| label: prediction
+nSearch <- 2:2000
+predSkewAll <- sapply(nSearch, function(n) basketballPrediction(n)["skew"])
+predKurtAll <- sapply(nSearch, function(n) basketballPrediction(n)["kurt"])
+stepInSE <- sapply(nSearch, function(n) (1 / n) / basketballSE(n))
+dieStep <- 1 / (populations$die$sigma * sqrt(8))
+skewN <- min(nSearch[abs(predSkewAll) <= criteria$skew])
+kurtN <- min(nSearch[abs(predKurtAll) <= criteria$kurt])
+gapN <- min(nSearch[stepInSE <= dieStep])
+c(skewN = skewN, kurtN = kurtN, gapN = gapN)
+```
+
+* Skewness: the exact formula reaches my cutoff of `r criteria$skew` at n = `r skewN`.
+* Kurtosis: it is within `r criteria$kurt` from n = `r kurtN`.
+* Gaps: the shooting percentage can only take the values 0, 1 / n, 2 / n, …, 1. As in 02die.qmd and 04binomial.qmd, I
+  measured the step 1 / n in standard errors. It falls below the `r round(dieStep, 3)` SE at which the die passed at n = `r gapN`.
+
+So I predicted that the gaps would be the bottleneck and decide the answer, at about n = `r gapN`. In 04binomial.qmd the
+probability 0.1 was far from 0.5, so both the skewness and the gaps were problems. Here the average p of 0.7 is
+closer to 0.5, so the skewness is solved quickly, at n = `r skewN`, and only the gaps remain.
+
+## Does the fatigue matter?
+
+I expected the overall shape to be very similar to a player who shoots with p = 0.7 on every shot
+(Binomial(n, 0.7) / n), with only the small difference in the SE described above.
+
+## One game of 20 shots
+
+I expected the shooting percentage of a single 20 shot game not to be normal under my standard. Its predicted skewness
+is `r round(basketballPrediction(20)["skew"], 3)`, which passes my cutoff, but the step between possible values is `r round((1 / 20) / basketballSE(20), 3)` SE, much larger than the
+`r round(dieStep, 3)` SE at which the die passed. So the QQ plot should show clear steps.
+
+# 3. Which sample sizes did you investigate?
+
+## Coarse grid, then a finer grid
+
+I started at n = 2, because with one shot the probability is just 0.9 and the "fatigue" does not exist. The coarse grid
+covers my prediction of about n = `r gapN` with room on both sides.
+
+```{r}
+#| label: simulate
+coarse <- c(2, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500)
+res <- searchN(basketballGenerator, coarse, mu = 0.7, theoSE = basketballSE, pred = basketballPrediction)
+tab <- res$table
+nStar <- smallestN(tab)
+added <- setdiff(tab$n, coarse)
+showTable(tab)
+```
+
+Here theoSE is the exact SE and predSkew, predKurt are the exact values. The finer grid added `r paste(added, collapse = ", ")`.
+
+```{r}
+#| label: whichFailed
+failTable <- data.frame(
+  n = tab$n,
+  skewOK = abs(tab$skew) <= criteria$skew,
+  kurtOK = abs(tab$exKurt) <= criteria$kurt,
+  qqOK = tab$qqCor >= criteria$qqCor
+)
+knitr::kable(failTable)
+skewPass <- smallestN(tab, modifyList(criteria, list(qqCor = 0, kurt = Inf)))
+qqPass <- smallestN(tab, modifyList(criteria, list(skew = Inf, kurt = Inf)))
+```
+
+On its own, the skewness check passed from n = `r skewPass` (prediction `r skewN`) and the QQ check from n = `r qqPass` (prediction from the gaps `r gapN`).
+
+## Fatigue against a constant p = 0.7
+
+To see whether the changing p matters, I ran the same search for a player with p = 0.7 on every shot.
+
+```{r}
+#| label: constantP
+constGen <- function(n) rbinom(n, size = 1, prob = 0.7)
+constRes <- searchN(constGen, coarse, mu = 0.7, theoSE = iidSE(sqrt(0.21)),
+                    pred = iidPrediction(-0.4 / sqrt(0.21), (1 - 6 * 0.21) / 0.21))
+constTab <- constRes$table
+constN <- smallestN(constTab)
+compareN <- c(20, 50, 100, 200)
+fatigueVsConstant <- data.frame(
+  n = compareN,
+  qqFatigue = tab$qqCor[match(compareN, tab$n)],
+  qqConstant = constTab$qqCor[match(compareN, constTab$n)],
+  sdFatigue = tab$simSD[match(compareN, tab$n)],
+  sdConstant = constTab$simSD[match(compareN, constTab$n)]
+)
+knitr::kable(fatigueVsConstant, digits = 4)
+```
+
+The constant p = 0.7 player became normal at n = `r constN`, against n = `r nStar` with fatigue. The QQ correlations are almost the same
+at every n, and the SD with fatigue is slightly smaller, as the exact SE predicted.
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+```{r}
+#| label: summaryNumbers
+star     <- tab[tab$n == nStar, ]
+lastFail <- tab[tab$n == max(tab$n[tab$n < nStar & !tab$normalEnough]), ]
+failed   <- c(skewness = abs(lastFail$skew) > criteria$skew,
+              kurtosis = abs(lastFail$exKurt) > criteria$kurt,
+              QQ = lastFail$qqCor < criteria$qqCor)
+at20     <- tab[tab$n == 20, ]
+at30     <- tab[tab$n == 30, ]
+seRange  <- range(tab$seRatio)
+naiveRatio <- tab$simSD / sqrt(0.21 / tab$n)
+meanGapZ <- abs(tab$simMean - tab$theoMean) / (tab$theoSE / sqrt(num))
+naiveOK <- abs(naiveRatio - 1) <= seTol
+naivePassFrom <- min(tab$n[sapply(seq_along(naiveOK), function(i) all(naiveOK[i:length(naiveOK)]))])
+```
+
+My prediction from the gaps was n = `r gapN` and the simulation gave n = `r nStar`.
+
+```{r}
+#| label: whyN
+#| fig.width: 11
+#| fig.height: 4.8
+old <- par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+plot(tab$n, tab$qqCor, log = "x", type = "o", pch = 16, lwd = 2, ylim = c(0.97, 1),
+     xlab = "Number of shots n (log scale)", ylab = "QQ correlation", main = "The gaps decide")
+lines(constTab$n, constTab$qqCor, type = "o", pch = 1, lwd = 2, col = "darkorange", lty = 2)
+abline(h = criteria$qqCor, col = "firebrick", lty = 2, lwd = 2)
+abline(v = c(gapN, nStar), col = c("gray40", "steelblue"), lty = 3, lwd = 2)
+legend("bottomright", c("Fatigue (0.9 to 0.5)", "Constant p = 0.7", paste("Cutoff", criteria$qqCor),
+                        paste("Gap prediction n =", gapN), paste("Chosen n =", nStar)),
+       col = c("black", "darkorange", "firebrick", "gray40", "steelblue"),
+       lty = c(1, 2, 2, 3, 3), pch = c(16, 1, NA, NA, NA), lwd = 2, bty = "n", cex = 0.8)
+
+plot(tab$n, tab$seRatio, log = "x", pch = 16, ylim = c(0.9, 1.1),
+     xlab = "Number of shots n (log scale)", ylab = "Simulated SD / SE", main = "Exact SE against naive SE")
+points(tab$n, naiveRatio, pch = 4, col = "darkorange", lwd = 2)
+abline(h = 1, col = "gray40")
+abline(h = theory$ratio[theory$n == 200], col = "darkorange", lty = 2)
+legend("topright", c("Simulated SD / exact SE", "Simulated SD / naive SE (p = 0.7)"),
+       col = c("black", "darkorange"), pch = c(16, 4), lwd = c(NA, 2), bty = "n", cex = 0.8)
+par(old)
+```
+
+Left: with and without fatigue the QQ correlation follows almost the same path and crosses my cutoff near the gap
+prediction. Right: the simulated SD matches the exact SE (black, near 1) and is consistently below the naive SE
+(orange, near `r round(theory$ratio[theory$n == 200], 3)`).
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+Center: the simulated mean was within 2 Monte Carlo standard errors of 0.7 at `r sum(meanGapZ <= 2)` of `r nrow(tab)` sample sizes (largest gap
+`r round(max(meanGapZ), 2)`).
+
+Spread: against the exact SE the ratio stayed between `r round(seRange[1], 3)` and `r round(seRange[2], 3)`, and `r sum(tab$seOK)` of `r nrow(tab)` sample sizes passed my 5 percent check.
+Against the naive p = 0.7 SE the ratio was between `r round(min(naiveRatio), 3)` and `r round(max(naiveRatio), 3)`. The naive SE is not far off: it passes my 5 percent check
+from n = `r naivePassFrom` on. But it is too large at every n, as predicted.
+
+# 6. Why did you choose that value?
+
+As for the die and the binomial, the histogram breaks are halfway between the possible values (1 / n apart). The red
+curve is the normal curve with mean 0.7 and the exact SE.
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotLattice(res, nShow = unique(c(5, 20, nStar, 300)), mu = 0.7, theoSE = basketballSE, label = "Shooting percentage")
+```
+
+At n = 5 there are only six possible values and the QQ plot is a staircase. At n = 20, one game in the handout, the
+histogram is roughly bell shaped but the steps are still large. At n = `r nStar` the steps are small and the QQ plot is
+close to the line. At n = 300 the steps are hard to see.
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Fatigue")
+```
+
+The skewness follows the exact prediction (red), and the kurtosis is small at every n.
+
+Is one game of 20 shots enough? At n = 20 the skewness was `r round(at20$skew, 3)`, within my cutoff, but the QQ correlation was
+`r round(at20$qqCor, 4)`, below `r criteria$qqCor`. So the shooting percentage of a single 20 shot game is not normal under my standard. At n = 30 the
+QQ correlation was `r round(at30$qqCor, 4)`, also not enough.
+
+I chose n = `r nStar` because:
+
+* At n = `r nStar` the skewness was `r round(star$skew, 3)`, the excess kurtosis `r round(star$exKurt, 3)` and the QQ correlation `r round(star$qqCor, 4)`, all within my
+  cutoffs, and every larger n I tested also passed.
+* At the largest n that still failed (n = `r lastFail$n`), the check that failed was `r paste(names(failed)[failed], collapse = " and ")` (QQ correlation
+  `r round(lastFail$qqCor, 4)`).
+* The constant p = 0.7 comparison gave a similar n (`r constN`), so the answer comes from the gaps, not from the fatigue.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    "Mean 0.7 (about 95 percent of n within 2 Monte Carlo SEs)",
+    "Exact SE holds; naive SE a few percent too large",
+    paste("Skewness check passes at about n =", skewN),
+    paste("Gaps decide at about n =", gapN),
+    "Fatigue behaves almost like constant p = 0.7",
+    "One game of 20 shots is not normal"
+  ),
+  Result = c(
+    paste0("Within 2 Monte Carlo SEs at ", sum(meanGapZ <= 2), " of ", nrow(tab), " n"),
+    paste0("Exact ratio ", round(seRange[1], 3), " to ", round(seRange[2], 3), "; naive ratio ",
+           round(min(naiveRatio), 3), " to ", round(max(naiveRatio), 3)),
+    paste("Skewness passed from n =", skewPass),
+    paste("Answer n =", nStar),
+    paste0("Constant p: n = ", constN, "; fatigue: n = ", nStar),
+    paste("QQ correlation at n = 20:", round(at20$qqCor, 4))
+  ),
+  Match = c(ifelse(mean(meanGapZ <= 2) >= 0.9, "Same", "Different"), "Same", "Same", "Same", "Same", "Same")
+)
+knitr::kable(predictionCheck)
+```
+
+The broken assumption mattered as little as I expected, and seeing it was still striking. The shots are not
+identically distributed, yet the shooting percentage became normal at almost the same n as for a player with a
+constant p = 0.7, and the exact mean and SE formulas worked at every n. The general CLT for independent but not identical values (the Lindeberg CLT) only
+needs that no single shot dominates the total, which is true here because every shot is 0 or 1.
+
+The second surprise was that the step size rule from the die predicted the answer again (n = `r gapN` predicted, n = `r nStar`
+found). The skewness here is small (`r round(basketballPrediction(100)["skew"], 3)` at n = 100), so, like Binomial(5, 0.5) in my 04binomial experiment, only the
+gaps mattered.
+
+The third observation is practical. The naive SE that pretends p = 0.7 for every shot is only about
+`r round(100 * (1 / theory$ratio[theory$n == 200] - 1), 1)` percent too large, so for this amount of fatigue it would be a reasonable shortcut, but it is wrong in a
+predictable direction: changing probabilities always make the total less variable than a constant probability with
+the same average.
+
+## Limitations
+
+* I spread the same fatigue (0.9 down to 0.5) over every n. A real game with more shots might have more fatigue,
+  which would be a different model.
+* The shots are assumed independent; real shots could depend on each other (for example, confidence after a make).
+* My standard counts the gaps, so the answer mainly measures how many shots it takes for the steps of 1 / n to become
+  small, not the fatigue itself.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.

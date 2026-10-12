@@ -1,0 +1,318 @@
+---
+title: "CLT Experiment 8 (extra credit)"
+subtitle: "Age at Death Mixture"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+```
+
+# 1. What population are you sampling from?
+
+This is the custom age at death distribution from the class handout. Ages are whole numbers from 0 to 100, and the
+probability of each age comes from two parts added together and then rescaled to sum to 1:
+
+* an early death part, 0.045 e^(−age / 5), which is highest at age 0 and falls quickly in childhood;
+* an adult part, 0.030 e^(−(age − 65)² / 200), a bell shape centered at 65 with spread 10.
+
+The handout stresses that this is a synthetic distribution built to mimic the shape of a graph, not real mortality data.
+
+The CLT assumptions hold here: I draw ages independently from the same distribution, and the variance is finite
+(ages are between 0 and 100). What makes this population interesting is its shape: it has two peaks.
+
+```{r}
+#| label: population
+#| fig.width: 7
+#| fig.height: 4.5
+early <- 0.045 * exp(-deathAge / 5)
+adult <- 0.030 * exp(-0.5 * ((deathAge - 65) / 10)^2)
+set.seed(student_id)
+popDraws <- rdeath(100000)
+share <- as.numeric(table(factor(popDraws, levels = deathAge))) / length(popDraws)
+
+plot(deathAge, 100 * share, type = "h", col = "gray60", lwd = 3,
+     xlab = "Age at death", ylab = "Percent of deaths", main = "Age at death: 100,000 draws")
+lines(deathAge, 100 * deathProb, col = "darkorange", lwd = 2)
+curve(100 * dnorm(x, mean = deathMu, sd = deathSigma), add = TRUE, col = "steelblue", lwd = 2, lty = 2)
+legend("topright", c("Simulated share", "True probability", "Normal with same mean and SD"),
+       col = c("gray60", "darkorange", "steelblue"), lwd = c(3, 2, 2), lty = c(1, 1, 2), bty = "n")
+
+data.frame(
+  quantity    = c("mean", "sd", "skewness", "excess kurtosis", "P(age < 20)", "P(age >= 60)"),
+  theoretical = c(deathMu, deathSigma, deathGamma1, deathGamma2,
+                  sum(deathProb[deathAge < 20]), sum(deathProb[deathAge >= 60])),
+  simulated   = c(mean(popDraws), sd(popDraws), skewness(popDraws), exKurtosis(popDraws),
+                  mean(popDraws < 20), mean(popDraws >= 60))
+)
+popTest <- chisq.test(c(sum(popDraws < 20), sum(popDraws >= 20 & popDraws < 60), sum(popDraws >= 60)),
+                      p = c(sum(deathProb[deathAge < 20]), sum(deathProb[deathAge >= 20 & deathAge < 60]),
+                            sum(deathProb[deathAge >= 60])))
+```
+
+The early part holds `r round(100 * sum(early) / sum(early + adult), 1)` percent of all deaths and the adult part the rest. The mean age is `r round(deathMu, 1)` and the SD
+`r round(deathSigma, 1)`, so the mean lies in the valley between the two peaks, where hardly anyone dies. A normal curve with the same
+mean and SD (dashed) looks nothing like the population. The skewness is `r round(deathGamma1, 3)` (the long tail is on the young side) and
+the excess kurtosis is `r round(deathGamma2, 3)` (no long tails, since ages stop at 0 and 100). The simulated values match the
+theory, and a chi square test on three age groups did not reject the true probabilities (p = `r round(popTest$p.value, 3)`).
+
+# 2. What did you expect before running the simulation?
+
+## Center and spread
+
+Independent draws with a finite variance, so I expected the mean of the sample means to be `r round(deathMu, 2)` and their SD to be
+`r round(deathSigma, 2)` / sqrt(n) at every n.
+
+## Two peaks
+
+My first intuition was that this population needs a very large n. Its two peaks sit at the two extremes, infant
+deaths and deaths in old age, and I thought it would take a lot of draws to merge them into one bell curve. But the
+formulas I used for the other populations only depend on the skewness and the kurtosis, which describe asymmetry and
+tails, not the valley between the peaks. When I put this population's values into them, the answer was much smaller
+than my intuition, which surprised me.
+
+## The n at which each check should pass
+
+```{r}
+#| label: prediction
+skewN <- predictedN(deathGamma1)
+kurtN <- ceiling(abs(deathGamma2) / criteria$kurt)
+dieStep <- 1 / (populations$die$sigma * sqrt(8))
+c(skewN = skewN, kurtN = kurtN, stepInSEAtN1 = 1 / deathSigma)
+```
+
+* Skewness: `r round(abs(deathGamma1), 3)` / sqrt(n) reaches my cutoff of `r criteria$skew` at n = `r skewN`.
+* Kurtosis: `r round(abs(deathGamma2), 3)` / n is within `r criteria$kurt` from n = `r kurtN`.
+* Gaps: ages are whole numbers, so the mean of n ages moves in steps of 1 / n. But the SD is so large that even at n = 1
+  the step is only `r round(1 / deathSigma, 3)` SE, far below the `r round(dieStep, 3)` SE at which the die passed. So the gaps should not matter here.
+
+So I predicted that the skewness would decide, at about n = `r skewN`.
+
+## n = 2
+
+At n = 2 I expected the histogram of means to have three bumps: two infants (far left), one infant and one older
+person (in the middle), and two older people (right). The infant part has an average age of about
+`r round(sum(deathAge * early) / sum(early), 1)` and the adult part about `r round(sum(deathAge * adult) / sum(adult), 1)`, so the middle bump should be near their average, `r round((sum(deathAge * early) / sum(early) + sum(deathAge * adult) / sum(adult)) / 2, 1)`, not at the
+overall mean of `r round(deathMu, 1)`. So the two peaked population should turn into a three peaked one, and the bumps should merge
+after a few more draws.
+
+## n = 30
+
+I expected n = 30 to be enough. The skewness needs about n = `r skewN`, the kurtosis n = `r kurtN`, and the gaps do not matter, so at
+n = 30 the mean should already look like a smooth bell curve. The predicted skewness at n = 30 is
+`r round(abs(deathGamma1) / sqrt(30), 3)`, below my cutoff of `r criteria$skew`, although not by a large margin.
+
+## Tails at n = 1
+
+I expected no values at all beyond ±1.96 SDs at n = 1, on either side. The ages only go from 0 to 100, but the mean
+± 1.96 SD is `r round(deathMu - 1.96 * deathSigma, 1)` to `r round(deathMu + 1.96 * deathSigma, 1)`, so both tails are cut off inside that interval and no extreme value can
+exist.
+
+# 3. Which sample sizes did you investigate?
+
+## Coarse grid, then a finer grid
+
+My prediction was about n = `r skewN`, so I made the grid dense at small n: `r paste(c(1, 2, 3, 5, 10, 15, 20, 30, 50, 100), collapse = ", ")`.
+
+```{r}
+#| label: simulate
+coarse <- c(1, 2, 3, 5, 10, 15, 20, 30, 50, 100)
+res <- searchN(rdeath, coarse, mu = deathMu, theoSE = iidSE(deathSigma), pred = iidPrediction(deathGamma1, deathGamma2))
+tab <- res$table
+nStar <- smallestN(tab)
+added <- setdiff(tab$n, coarse)
+showTable(tab)
+```
+
+The finer grid added `r paste(added, collapse = ", ")`.
+
+```{r}
+#| label: whichFailed
+failTable <- data.frame(
+  n = tab$n,
+  skewOK = abs(tab$skew) <= criteria$skew,
+  kurtOK = abs(tab$exKurt) <= criteria$kurt,
+  qqOK = tab$qqCor >= criteria$qqCor
+)
+knitr::kable(failTable)
+skewPass <- smallestN(tab, modifyList(criteria, list(qqCor = 0, kurt = Inf)))
+qqPass <- smallestN(tab, modifyList(criteria, list(skew = Inf, kurt = Inf)))
+kurtPass <- smallestN(tab, modifyList(criteria, list(skew = Inf, qqCor = 0)))
+firstSkewOK <- min(tab$n[failTable$skewOK])
+```
+
+On its own, the kurtosis check passed from n = `r kurtPass` and the QQ check from n = `r qqPass`, as expected. The skewness check first
+passed at n = `r firstSkewOK`, but then failed again several times, and only passed for every larger n from n = `r skewPass`.
+
+## Why the skewness stayed near the cutoff
+
+```{r}
+#| label: skewNoise
+skewZoom <- tab[tab$n >= 10, c("n", "skew", "predSkew")]
+skewZoom$difference <- skewZoom$skew - skewZoom$predSkew
+skewZoom$differenceInNoise <- skewZoom$difference / sqrt(6 / num)
+knitr::kable(skewZoom, digits = 3, row.names = FALSE)
+```
+
+From n = 30 on, the simulated skewness was more negative than the prediction at every n, by up to about 3 times the
+noise level sqrt(6 / num) = `r round(sqrt(6 / num), 3)`. One row that far off would be unusual, but many rows being off in the same direction
+is what I would expect from my design, as I saw for the mean in 03exponential.qmd: I reset the seed before each n,
+so all rows reuse the same random stream and move together. I think this is the reason here as well. For this population the predicted skewness is close to the cutoff for a long
+range of n (it only falls from `r round(abs(deathGamma1) / sqrt(20), 3)` at n = 20 to `r round(abs(deathGamma1) / sqrt(50), 3)` at n = 50), so this shared shift is enough to push several rows
+back over the cutoff.
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+```{r}
+#| label: summaryNumbers
+star     <- tab[tab$n == nStar, ]
+lastFail <- tab[tab$n == max(tab$n[tab$n < nStar & !tab$normalEnough]), ]
+failed   <- c(skewness = abs(lastFail$skew) > criteria$skew,
+              kurtosis = abs(lastFail$exKurt) > criteria$kurt,
+              QQ = lastFail$qqCor < criteria$qqCor)
+lucky    <- tab$n[tab$n < nStar & tab$normalEnough]
+at1      <- tab[tab$n == 1, ]
+at30     <- tab[tab$n == 30, ]
+seRange  <- range(tab$seRatio)
+meanGapZ <- abs(tab$simMean - tab$theoMean) / (tab$theoSE / sqrt(num))
+```
+
+My prediction was n = `r skewN`; with my seed the answer is n = `r nStar`, because of the shared shift in the skewness described above.
+
+```{r}
+#| label: whyN
+#| fig.width: 10
+#| fig.height: 5.5
+zoom <- tab[tab$n >= 5, ]
+nLine <- exp(seq(log(5), log(100), length.out = 300))
+band <- 1.96 * sqrt(6 / num)
+plot(NULL, xlim = c(5, 100), ylim = c(-0.45, 0), log = "x",
+     xlab = "Sample size n (log scale)", ylab = "Skewness of the sample means",
+     main = paste0("Why n = ", nStar, ": the skewness stays close to the cutoff"))
+polygon(c(nLine, rev(nLine)), c(deathGamma1 / sqrt(nLine) + band, rev(deathGamma1 / sqrt(nLine) - band)),
+        col = "gray90", border = NA)
+lines(nLine, deathGamma1 / sqrt(nLine), lwd = 2)
+abline(h = -criteria$skew, col = "firebrick", lty = 2, lwd = 2)
+abline(v = c(skewN, nStar), col = c("darkorange", "steelblue"), lty = 3, lwd = 2)
+points(zoom$n, zoom$skew, pch = ifelse(zoom$normalEnough, 16, 4), cex = 1.3, lwd = 2,
+       col = ifelse(zoom$normalEnough, "steelblue", "firebrick"))
+legend("bottomright", c(paste0("Prediction ", round(deathGamma1, 2), " / sqrt(n)"), "Monte Carlo noise band (95%)",
+                        paste("Cutoff", -criteria$skew), paste("Prediction n =", skewN), paste("Chosen n =", nStar),
+                        "Passed all checks", "Failed a check"),
+       col = c("black", "gray80", "firebrick", "darkorange", "steelblue", "steelblue", "firebrick"),
+       lty = c(1, NA, 2, 3, 3, NA, NA), lwd = c(2, NA, 2, 2, 2, 2, 2), pch = c(NA, 15, NA, NA, NA, 16, 4),
+       pt.cex = c(NA, 2, NA, NA, NA, 1.3, 1.3), bty = "n", cex = 0.8)
+```
+
+The black line crosses the cutoff at n = `r skewN`, but from about n = 30 the points sit below the line, near the bottom of the
+gray band or outside it, all on the same side. The rows passed and failed by turns (n = `r paste(lucky, collapse = ", ")` passed before n = `r lastFail$n`
+failed), and only from n = `r nStar` did every row pass.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+```{r}
+#| label: sePlot
+plotSE(tab, label = "Age at death")
+```
+
+Center: the simulated mean was within 2 Monte Carlo standard errors of `r round(deathMu, 2)` at `r sum(meanGapZ <= 2)` of `r nrow(tab)` sample sizes (largest gap
+`r round(max(meanGapZ), 2)`).
+
+Spread: the SE ratio stayed between `r round(seRange[1], 3)` and `r round(seRange[2], 3)`, and `r sum(tab$seOK)` of `r nrow(tab)` sample sizes passed my 5 percent check, including
+n = 1. The two peaks do not affect the formula sigma / sqrt(n) at all.
+
+# 6. Why did you choose that value?
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotSampling(res, nShow = unique(c(1, 2, 10, nStar)), mu = deathMu, theoSE = iidSE(deathSigma), label = "Age at death")
+```
+
+At n = 1 the histogram is the population with its two peaks. At n = 2 there are three bumps, as I predicted: two
+young people (near 5), one young and one old (near 35), and two old people (near 65). By n = 10 the bumps have merged
+into one hill with a longer left tail, and the QQ plot bends only slightly at the lower end. At n = `r nStar` the histogram
+follows the normal curve.
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Age at death")
+```
+
+Tails: at n = 1 the tail shares beyond ±1.96 were `r round(100 * at1$tailLow, 2)` and `r round(100 * at1$tailHigh, 2)` percent, as predicted.
+
+Is n = 30 enough? With my seed the skewness at n = 30 was `r round(at30$skew, 3)`, just outside my cutoff, while the QQ correlation was
+`r round(at30$qqCor, 4)` and the kurtosis `r round(at30$exKurt, 3)` passed easily. So under my strict rule n = 30 just fails here, but by a margin
+smaller than the noise.
+
+I chose n = `r nStar` because:
+
+* At n = `r nStar` the skewness was `r round(star$skew, 3)`, the excess kurtosis `r round(star$exKurt, 3)` and the QQ correlation `r round(star$qqCor, 4)`, all within my
+  cutoffs, and every larger n I tested also passed.
+* At the largest n that still failed (n = `r lastFail$n`), the check that failed was `r paste(names(failed)[failed], collapse = " and ")` (skewness `r round(lastFail$skew, 3)`).
+* I keep n = `r nStar` because it is what my rule gives with my seed, but section 3 shows that it is pushed up by a shared
+  shift in the skewness estimates. I test how much the answer moves with other seeds in 09reproducibility.qmd.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    paste("Mean", round(deathMu, 2), "(about 95 percent of n within 2 Monte Carlo SEs)"),
+    "SE equals sigma / sqrt(n) at every n",
+    "Three bumps at n = 2, merged after a few draws",
+    "Tails 0 and 0 percent at n = 1",
+    paste("Skewness decides at about n =", skewN),
+    "n = 30 is enough"
+  ),
+  Result = c(
+    paste0("Within 2 Monte Carlo SEs at ", sum(meanGapZ <= 2), " of ", nrow(tab), " n"),
+    paste0("SE ratio ", round(seRange[1], 3), " to ", round(seRange[2], 3), "; ", sum(tab$seOK), " of ", nrow(tab), " passed"),
+    "Seen in section 6",
+    paste0(round(100 * at1$tailLow, 2), "% and ", round(100 * at1$tailHigh, 2), "%"),
+    paste("Skewness decided; answer n =", nStar),
+    paste("Skewness at n = 30:", round(at30$skew, 3))
+  ),
+  Match = c(ifelse(mean(meanGapZ <= 2) >= 0.9, "Same", "Different"), "Same", "Same", "Same", "Different",
+            ifelse(at30$normalEnough, "Same", "Different"))
+)
+knitr::kable(predictionCheck)
+```
+
+The first surprise was the population itself. It is the least normal looking of all my populations, with two
+separate peaks and the mean in a valley where almost nobody dies, yet the bumps disappeared by n = 10. The CLT does not
+care about the number of peaks; the skewness and the kurtosis are what matter, and here both are mild.
+
+The second surprise was that the answer with my seed (n = `r nStar`) was more than twice my prediction (n = `r skewN`), even though the
+skewness formula worked well at small n. As far as I can tell, the reason was not the population but my simulation
+design: because every row shares one random stream, a shift in the skewness estimates showed up in many rows at once,
+and the predicted skewness stays close to the cutoff for a long range of n. In 03exponential.qmd the same kind of noise
+produced a few lucky passes before the answer; here it went the other way and produced late failures. This population
+showed me that a strict rule ("every larger n must pass") can be pushed around by noise when the true value sits near
+the cutoff for a long time.
+
+## Limitations
+
+* The answer n = `r nStar` is sensitive to the seed, for the reason explained in section 3. A different seed could give a
+  noticeably smaller answer; 09reproducibility.qmd tests this.
+* The distribution is synthetic; it is not real mortality data.
+* My cutoffs treat a skewness of 0.21 as a failure and 0.19 as a pass. Here the true skewness is close to 0.2 for many
+  n, so the exact answer depends heavily on where the cutoff is.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.

@@ -1,0 +1,371 @@
+---
+title: "CLT Experiment 6 (extra credit)"
+subtitle: "Dependent Machine Failures"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+baselineRate <- 1
+beta <- 1.25
+referenceTime <- 1
+```
+
+# 1. What population are you sampling from?
+
+This is the dependent machine failure process from the class handout. X_t is the time a machine runs between failure
+t − 1 and failure t. The first operating time is Exponential(1). After that, the failure rate depends on the previous
+operating time:
+
+$$\lambda_t = \lambda_0 e^{\beta (X_{t-1} - \mu)}, \qquad X_t \mid X_{t-1} \sim \text{Exponential}(\lambda_t),$$
+
+with baseline rate λ₀ = `r baselineRate`, β = `r beta` and reference time μ = `r referenceTime`. A long run (more than 1) raises the next failure rate, so the next
+run tends to be short; a short run lowers it, so the next run tends to be long. The handout calls this negative or
+compensating dependence.
+
+One "sample of size n" here is the first n operating times of one machine, and its sample mean is that machine's
+average operating time. I simulate `r format(num, big.mark = ",")` machines for each n.
+
+The CLT assumptions are not met. The operating times are not independent (each one depends on the previous one), and
+they are not identically distributed (X_1 is Exponential(1), but the later ones are not).
+
+```{r}
+#| label: onePath
+#| fig.width: 10
+#| fig.height: 4
+set.seed(student_id)
+pathN <- 200
+failureTime <- numeric(pathN)
+failureRate <- numeric(pathN)
+failureRate[1] <- baselineRate
+failureTime[1] <- rexp(1, rate = failureRate[1])
+for (t in 2:pathN) {
+  failureRate[t] <- baselineRate * exp(beta * (failureTime[t - 1] - referenceTime))
+  failureTime[t] <- rexp(1, rate = failureRate[t])
+}
+plot(1:pathN, failureTime, type = "h", col = "gray40", xlab = "Failure number t", ylab = "Operating time",
+     main = paste0("One machine: first ", pathN, " operating times (seed ", student_id, ")"))
+abline(h = referenceTime, col = "firebrick", lty = 2)
+```
+
+The tall bars are almost always followed by short ones, which is the compensating dependence.
+
+## Long run behaviour
+
+The operating times do not come from one fixed distribution, so to describe the population I simulated many machines
+for a long time and kept the values after the process had settled.
+
+```{r}
+#| label: longRun
+set.seed(student_id)
+chains <- 10000
+burnIn <- 1000
+keep <- 200
+x <- rexp(chains, rate = baselineRate)
+kept <- matrix(NA, nrow = chains, ncol = keep)
+for (t in 2:(burnIn + keep)) {
+  x <- rexp(chains, rate = baselineRate * exp(beta * (x - referenceTime)))
+  if (t > burnIn) kept[, t - burnIn] <- x
+}
+longRunValues <- as.vector(kept)
+lagCor <- sapply(1:5, function(k) cor(as.vector(kept[, 1:(keep - k)]), as.vector(kept[, (1 + k):keep])))
+longRunSD <- sd(rowMeans(kept)) * sqrt(keep)
+longRun <- data.frame(
+  quantity = c("mean", "sd", "skewness", "excess kurtosis", "lag 1 correlation", "lag 2 correlation",
+               "SD of the mean of 200 values times sqrt(200)"),
+  value = c(mean(longRunValues), sd(longRunValues), skewness(longRunValues), exKurtosis(longRunValues),
+            lagCor[1], lagCor[2], longRunSD)
+)
+knitr::kable(longRun, digits = 3)
+longRunMean <- mean(longRunValues)
+```
+
+In the long run the operating times have mean `r round(longRunMean, 3)`, not 1, and SD `r round(sd(longRunValues), 2)`, not 1. Neighbouring values
+are negatively correlated (lag 1: `r round(lagCor[1], 2)`), and the correlation flips sign from lag to lag
+(`r paste(round(lagCor, 2), collapse = ", ")` for lags 1 to 5): long, short, long, short. The last row measures how much the mean of many
+consecutive values actually varies, in the same units as an SD; I use it in section 2.
+
+# 2. What did you expect before running the simulation?
+
+## What a naive analysis would assume
+
+If I ignored the dependence between the operating times, this would look like an ordinary Exponential(1) problem: the
+mean of the sample means would be 1, their SD 1 / sqrt(n), and the shape would pass my standard at about n = 100, as
+in 03exponential.qmd. I expected this to be wrong.
+
+## Center
+
+I expected the mean not to stay at 1 but to become clearly larger. An Exponential(1) value is below its mean of 1 with
+probability `r round(100 * pexp(1), 0)` percent. In this process a short run lowers the failure rate of the same machine, so its next run
+tends to be much longer. Given X_1, the expected next operating time is 1 / λ_2 = e^(−β (X_1 − 1)), and averaging
+over X_1 ~ Exponential(1) gives
+
+$$E(X_2) = e^{\beta} \cdot \frac{1}{1 + \beta} = `r round(exp(beta) / (1 + beta), 3)`.$$
+
+```{r}
+#| label: checkX2
+set.seed(student_id)
+x1 <- rexp(1e6, rate = baselineRate)
+x2 <- rexp(1e6, rate = baselineRate * exp(beta * (x1 - referenceTime)))
+c(simulated = mean(x2), formula = exp(beta) / (1 + beta), standardError = sd(x2) / sqrt(1e6))
+```
+
+I checked the formula with one million simulated pairs: the mean of X_2 was `r round(mean(x2), 4)`, within about one standard error
+(`r round(sd(x2) / sqrt(1e6), 4)`) of the formula. So I expected the mean of the sample means to be 1 at n = 1 and to move toward the long
+run mean of about `r round(longRunMean, 2)` from section 1 as n grows.
+
+## Spread
+
+I expected the SD of the sample means to be clearly larger than the naive SE 1 / sqrt(n). Two effects work in opposite
+directions. The zigzag pattern of short, long, short, long (the negative lag 1 correlation) partly cancels out and
+makes the average more stable. But the dependence also makes each operating time much more variable: the long run SD
+is `r round(sd(longRunValues), 2)`, not 1. I expected this second effect to be much stronger. The last row of the long run table in section 1
+measures both effects together: the SD of a long average is about `r round(longRunSD, 2)` / sqrt(n). So I expected the SD of the means to be
+about `r round(longRunSD, 1)` times the naive SE for large n.
+
+## Shape
+
+The long run skewness is `r round(skewness(longRunValues), 2)`. If the values were independent, the skewness of the mean would be about
+`r round(skewness(longRunValues), 2)` / sqrt(n), which reaches my cutoff of `r criteria$skew` at n = `r predictedN(skewness(longRunValues))`. I could not calculate how the dependence changes
+this. The zigzag pattern might help by mixing long and short runs, but my guess was that the shape would become normal
+later than n = `r predictedN(skewness(longRunValues))`, because the dependence is one more complication on top of a skewness that already needs about
+`r predictedN(skewness(longRunValues))` values.
+
+## n = 30
+
+I expected n = 30 to be far from enough. Even for independent values the skewness at n = 30 would be about
+`r round(skewness(longRunValues), 2)` / sqrt(30) = `r round(skewness(longRunValues) / sqrt(30), 2)`, far above my cutoff of `r criteria$skew`.
+
+## Overall
+
+I expected the shape to become normal at some n, later than `r predictedN(skewness(longRunValues))`, but the naive formulas to be wrong at every n: the
+center near `r round(longRunMean, 2)` instead of 1, and the spread about `r round(longRunSD, 1)` times the naive SE.
+
+# 3. Which sample sizes did you investigate?
+
+## Coarse grid, then a finer grid
+
+My shape guess was later than n = `r predictedN(skewness(longRunValues))`, so I used a wide grid up to n = 1,000. To simulate 10,000 machines quickly I
+used `dependentMeans()` in functions.R, which runs all machines at the same time but uses the same rule as the loop
+in section 1.
+
+```{r}
+#| label: simulate
+coarse <- c(1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000)
+res <- searchN(NULL, coarse, mu = 1, theoSE = iidSE(1), pred = function(n) c(skew = NA, kurt = NA),
+               meansFun = function(n, reps) dependentMeans(n, reps, baselineRate, beta, referenceTime))
+tab <- res$table
+nStar <- smallestN(tab)
+added <- setdiff(tab$n, coarse)
+showTable(tab)
+```
+
+theoMean and theoSE in this table are the naive values (1 and 1 / sqrt(n)), so seRatio shows how far the naive SE is
+off. The finer grid added `r paste(added, collapse = ", ")`.
+
+```{r}
+#| label: whichFailed
+failTable <- data.frame(
+  n = tab$n,
+  skewOK = abs(tab$skew) <= criteria$skew,
+  kurtOK = abs(tab$exKurt) <= criteria$kurt,
+  qqOK = tab$qqCor >= criteria$qqCor
+)
+knitr::kable(failTable)
+skewPass <- smallestN(tab, modifyList(criteria, list(qqCor = 0, kurt = Inf)))
+qqPass <- smallestN(tab, modifyList(criteria, list(skew = Inf, kurt = Inf)))
+kurtPass <- smallestN(tab, modifyList(criteria, list(skew = Inf, qqCor = 0)))
+```
+
+On its own, the skewness check passed from n = `r skewPass`, the kurtosis check from n = `r kurtPass` and the QQ check from n = `r qqPass`.
+
+## How much does the dependence matter?
+
+To see the effect of the dependence directly, I ran the same search with three strengths of dependence. With β = 0
+the rate never changes, so the operating times are independent Exponential(1) values, the same population as
+03exponential.qmd.
+
+```{r}
+#| label: betaCompare
+betaValues <- c(0, 0.5, beta)
+betaCompare <- do.call(rbind, lapply(betaValues, function(b) {
+  r <- searchN(NULL, coarse, mu = 1, theoSE = iidSE(1), pred = function(n) c(skew = NA, kurt = NA),
+               meansFun = function(n, reps) dependentMeans(n, reps, baselineRate, b, referenceTime))
+  t <- r$table
+  data.frame(beta = b,
+             chosenN = smallestN(t),
+             meanAt1000 = t$simMean[t$n == 1000],
+             seRatioAt100 = t$seRatio[t$n == 100],
+             skewAt30 = t$skew[t$n == 30])
+}))
+knitr::kable(betaCompare, digits = 3)
+```
+
+With β = 0 the answer is n = `r betaCompare$chosenN[1]`, close to the n = 100 of 03exponential.qmd, the mean stays at 1 and the naive SE is
+right. As β grows, the long run mean moves away from 1, the SE ratio changes, and the required n grows. With β = 0.5
+the SE ratio is even below 1: the negative dependence wins over the larger SD. With β = `r beta` the larger SD wins.
+
+# 4. When did the sampling distribution become approximately normal?
+
+$$\boxed{n = `r nStar`}$$
+
+```{r}
+#| label: summaryNumbers
+star     <- tab[tab$n == nStar, ]
+lastFail <- tab[tab$n == max(tab$n[tab$n < nStar & !tab$normalEnough]), ]
+failed   <- c(skewness = abs(lastFail$skew) > criteria$skew,
+              kurtosis = abs(lastFail$exKurt) > criteria$kurt,
+              QQ = lastFail$qqCor < criteria$qqCor)
+at30     <- tab[tab$n == 30, ]
+coverage <- sapply(as.character(tab$n), function(k) {
+  m <- res$means[[k]]
+  mean(abs(m - longRunMean) <= 1.96 / sqrt(as.numeric(k)))
+})
+```
+
+The shape became approximately normal at n = `r nStar`, later than `r predictedN(skewness(longRunValues))`, as I guessed. But "normal" here does not mean the naive
+CLT is right, so the plot shows the center, the spread and the skewness together.
+
+```{r}
+#| label: whyN
+#| fig.width: 11
+#| fig.height: 4.2
+old <- par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+plot(tab$n, tab$simMean, log = "x", pch = 16, ylim = c(0.9, 1.8),
+     xlab = "n (log scale)", ylab = "Mean of the sample means", main = "Center")
+abline(h = 1, col = "firebrick", lty = 2, lwd = 2)
+abline(h = longRunMean, col = "steelblue", lty = 2, lwd = 2)
+legend("bottomright", c("Naive: 1", paste("Long run:", round(longRunMean, 2))),
+       col = c("firebrick", "steelblue"), lty = 2, lwd = 2, bty = "n")
+
+plot(tab$n, tab$simSD, log = "xy", pch = 16, ylim = range(c(tab$simSD, 1 / sqrt(tab$n), longRunSD / sqrt(tab$n))),
+     xlab = "n (log scale)", ylab = "SD of the sample means (log scale)", main = "Spread")
+lines(tab$n, 1 / sqrt(tab$n), col = "firebrick", lwd = 2, lty = 2)
+lines(tab$n, longRunSD / sqrt(tab$n), col = "steelblue", lwd = 2, lty = 2)
+legend("bottomleft", c("Naive: 1 / sqrt(n)", paste0("Long run: ", round(longRunSD, 2), " / sqrt(n)")),
+       col = c("firebrick", "steelblue"), lty = 2, lwd = 2, bty = "n")
+
+plot(tab$n, tab$skew, log = "x", pch = ifelse(tab$normalEnough, 16, 4),
+     col = ifelse(tab$normalEnough, "steelblue", "firebrick"), lwd = 2,
+     xlab = "n (log scale)", ylab = "Skewness of the sample means", main = "Shape")
+abline(h = criteria$skew, col = "firebrick", lty = 2, lwd = 2)
+abline(v = nStar, col = "steelblue", lty = 3, lwd = 2)
+par(old)
+```
+
+Left: the center climbs from 1 to about `r round(longRunMean, 2)` and stays there, far from the naive 1. Middle: the simulated SD follows the long
+run line, not the naive line. Right: the skewness decides the answer; it drops below `r criteria$skew` and stays there from
+n = `r nStar`.
+
+# 5. How do the simulated mean and standard error compare with theory?
+
+```{r}
+#| label: seCheck
+tab[, c("n", "simMean", "simSD", "theoSE", "seRatio", "seOK")]
+```
+
+Center: the simulated mean was `r round(tab$simMean[tab$n == 1], 3)` at n = 1, as expected for one Exponential(1) value, and `r round(tab$simMean[tab$n == 1000], 3)` at n = 1,000,
+close to the long run mean `r round(longRunMean, 3)`. The naive mean of 1 is wrong for every n above 1.
+
+Spread: the naive SE check failed at `r sum(!tab$seOK)` of `r nrow(tab)` sample sizes. From n = 10 on, the simulated SD was
+`r format(round(min(tab$seRatio[tab$n >= 10]), 2), nsmall = 2)` to `r format(round(max(tab$seRatio[tab$n >= 10]), 2), nsmall = 2)` times the naive SE, close to my prediction of `r round(longRunSD, 2)`.
+
+What this means in practice: if someone used the naive SE to build a 95 percent interval around a machine's average
+operating time, the interval would contain the long run mean only `r round(100 * coverage[as.character(nStar)])` percent of the time at n = `r nStar` and
+`r round(100 * coverage["1000"])` percent at n = 1,000, instead of 95 percent. More data does not fix this, because the naive interval is too
+narrow by about the same factor at every n.
+
+# 6. Why did you choose that value?
+
+The red curve is the normal curve the naive CLT predicts (mean 1, SD 1 / sqrt(n)); the dashed blue curve is a normal
+curve with the simulated mean and SD.
+
+```{r}
+#| label: samplingPlots
+#| fig.width: 11
+#| fig.height: 6
+plotSampling(res, nShow = unique(c(1, 30, nStar, 1000)), mu = 1, theoSE = iidSE(1), label = "Machine average")
+```
+
+At n = 1 the histogram is the Exponential(1) shape, and the red and blue curves are almost the same. At n = 30 the
+histogram is still right skewed, and the red naive curve is already in the wrong place: it is a narrow peak near 1 at
+the left edge. At n = `r nStar` and n = 1,000 the histogram is bell shaped and follows the blue curve, centered near `r round(longRunMean, 2)`; the red
+naive curve, centered at 1 and much narrower, is so far to the left that it falls outside the plotted window. The QQ
+plots at these n are close to straight lines: the shape is normal even though the naive center and spread are wrong.
+
+```{r}
+#| label: convergence
+#| fig.width: 11
+#| fig.height: 4
+plotConvergence(tab, label = "Dependent")
+```
+
+Is n = 30 enough? No: at n = 30 the skewness was `r round(at30$skew, 3)` and the tail shares beyond ±1.96 were
+`r round(100 * at30$tailLow, 2)` and `r round(100 * at30$tailHigh, 2)` percent.
+
+I chose n = `r nStar` because:
+
+* At n = `r nStar` the skewness was `r round(star$skew, 3)`, the excess kurtosis `r round(star$exKurt, 3)` and the QQ correlation `r round(star$qqCor, 4)`, all within my
+  cutoffs, and every larger n I tested also passed.
+* At the largest n that still failed (n = `r lastFail$n`), the check that failed was `r paste(names(failed)[failed], collapse = " and ")` (skewness `r round(lastFail$skew, 3)`).
+* This answer is only about the shape. The naive center and spread are wrong at every n, so n = `r nStar` is the n at which
+  the mean is normal around the wrong center with the wrong width, if the naive formulas are used.
+
+# 7. What surprised you?
+
+```{r}
+#| label: predictionCheck
+predictionCheck <- data.frame(
+  Prediction = c(
+    "Mean starts at 1 at n = 1",
+    paste("Mean climbs toward the long run mean of about", round(longRunMean, 2)),
+    paste("SD of the means about", round(longRunSD, 1), "times the naive SE"),
+    paste("Shape normal later than n =", predictedN(skewness(longRunValues)), "(guess)"),
+    "n = 30 not enough",
+    "Naive formulas wrong at every n"
+  ),
+  Result = c(
+    paste("Mean at n = 1:", round(tab$simMean[tab$n == 1], 3)),
+    paste("Mean at n = 1,000:", round(tab$simMean[tab$n == 1000], 3)),
+    paste0("Ratio ", format(round(min(tab$seRatio[tab$n >= 10]), 2), nsmall = 2), " to ", format(round(max(tab$seRatio[tab$n >= 10]), 2), nsmall = 2), " from n = 10"),
+    paste("n =", nStar),
+    paste("Skewness at n = 30:", round(at30$skew, 3)),
+    paste("Naive SE check failed at", sum(!tab$seOK), "of", nrow(tab), "n")
+  ),
+  Match = c("Same", "Same", "Same",
+            ifelse(nStar > predictedN(skewness(longRunValues)), "Same", "Different"), "Same", "Same")
+)
+knitr::kable(predictionCheck)
+```
+
+The biggest surprise was that the shape did become normal, as the general CLT for weakly dependent processes says,
+but at the wrong place. A histogram at n = `r nStar` looks perfectly fine, and nothing in its shape warns that the naive
+center is off by `r round(100 * (longRunMean - 1))` percent and the naive SE is too small by a factor of about `r round(longRunSD, 1)`. The shape checks I used for every
+other population would have passed this one too. Only comparing the center and the spread with theory showed the
+problem.
+
+The second surprise was that the direction of the SE error is not fixed. With β = `r beta` the SE was larger than the naive one,
+as I predicted, because the larger SD of each value won over the cancelling of neighbours. But in the β comparison in
+section 3, with β = 0.5 the cancelling won and the naive SE was even too large. So which effect wins depends on how
+strong the dependence is, and I could not have known it without simulating.
+
+The third surprise was how much later the shape became normal. I guessed later than `r predictedN(skewness(longRunValues))`, and the answer was `r nStar`, about
+`r round(nStar / predictedN(skewness(longRunValues)), 1)` times that. Two possible reasons are that the early values come from a different distribution than the later
+ones, and that the dependence changes how the skewness of a sum adds up. I did not test which one matters more.
+
+## Limitations
+
+* The long run mean, SD and correlations come from a simulation (10,000 machines, 200 kept values each), not from an
+  exact formula, so they have some Monte Carlo error.
+* Every machine starts from X_1 ~ Exponential(1), so the average of the first n values mixes the start with the long
+  run. A machine observed after it has been running for a while would give different results for small n.
+* I only used β = `r beta`, λ₀ = 1 and μ = 1 for the main answer; the β comparison shows that the answer depends strongly
+  on β.
+* The model is a stylized example from the handout, not a real reliability model.
+* All rows come from one random stream (seed `r student_id`), so they are not independent of each other.

@@ -91,13 +91,13 @@ seAgrees <- function(tab, tol = seTol) {
   abs(tab$seRatio - 1) <= tol
 }
 
-runGrid <- function(generator, nValues, mu, theoSE, pred, reps = num, seed = student_id) {
+runGrid <- function(generator, nValues, mu, theoSE, pred, reps = num, seed = student_id, meansFun = NULL) {
   nValues <- sort(unique(nValues))
   means <- list()
   rows <- list()
   for (n in nValues) {
     set.seed(seed)
-    m <- simMeans(generator, n, reps)
+    m <- if (is.null(meansFun)) simMeans(generator, n, reps) else meansFun(n, reps)
     key <- as.character(n)
     means[[key]] <- m
     rows[[key]] <- diagnose(m, n, mu, theoSE, pred)
@@ -136,14 +136,13 @@ combineGrids <- function(a, b) {
   list(table = tab, means = means)
 }
 
-searchN <- function(generator, coarse, mu, theoSE, pred, reps = num, seed = student_id) {
-  first <- runGrid(generator, coarse, mu, theoSE, pred, reps, seed)
+searchN <- function(generator, coarse, mu, theoSE, pred, reps = num, seed = student_id, meansFun = NULL) {
+  first <- runGrid(generator, coarse, mu, theoSE, pred, reps, seed, meansFun)
   extra <- refineGrid(first$table)
   if (length(extra) == 0) return(first)
-  second <- runGrid(generator, extra, mu, theoSE, pred, reps, seed)
+  second <- runGrid(generator, extra, mu, theoSE, pred, reps, seed, meansFun)
   combineGrids(first, second)
 }
-
 
 showTable <- function(tab, digits = 4) {
   cols <- c("n", "simMean", "theoMean", "simSD", "theoSE", "seRatio",
@@ -175,14 +174,14 @@ plotConvergence <- function(tab, label = "") {
   ns <- tab$n
   plot(ns, tab$skew, log = "x", pch = 16, xlab = "n (log scale)", ylab = "Skewness of means",
        main = paste(label, "skewness"),
-       ylim = range(c(tab$skew, tab$predSkew, criteria$skew, -criteria$skew)))
+       ylim = range(c(tab$skew, tab$predSkew, criteria$skew, -criteria$skew), na.rm = TRUE))
   lines(ns, tab$predSkew, col = "firebrick", lwd = 2)
   abline(h = c(-1, 1) * criteria$skew, lty = 2, col = "gray40")
   abline(h = 0, col = "gray80")
   
   plot(ns, tab$exKurt, log = "x", pch = 16, xlab = "n (log scale)", ylab = "Excess kurtosis of means",
        main = paste(label, "kurtosis"),
-       ylim = range(c(tab$exKurt, tab$predKurt, criteria$kurt, -criteria$kurt)))
+       ylim = range(c(tab$exKurt, tab$predKurt, criteria$kurt, -criteria$kurt), na.rm = TRUE))
   lines(ns, tab$predKurt, col = "firebrick", lwd = 2)
   abline(h = c(-1, 1) * criteria$kurt, lty = 2, col = "gray40")
   abline(h = 0, col = "gray80")
@@ -193,17 +192,39 @@ plotConvergence <- function(tab, label = "") {
   abline(h = criteria$qqCor, lty = 2, col = "gray40")
 }
 
+plotLattice <- function(res, nShow, mu, theoSE, label = "") {
+  old <- par(mfrow = c(2, length(nShow)), mar = c(4, 4, 3, 1))
+  on.exit(par(old))
+  for (n in nShow) {
+    m <- res$means[[as.character(n)]]
+    steps <- round((max(m) - min(m)) * n)
+    br <- min(m) - 1 / (2 * n) + (0:(steps + 1)) / n
+    h <- hist(m, breaks = br, plot = FALSE)
+    curveTop <- dnorm(mu, mean = mu, sd = theoSE(n))
+    hist(m, breaks = br, probability = TRUE, col = "gray75", border = if (n <= 10) "white" else NA,
+         ylim = c(0, max(h$density, curveTop)),
+         main = paste0(label, "\nn = ", n), xlab = "Sample mean")
+    curve(dnorm(x, mean = mu, sd = theoSE(n)), add = TRUE, col = "firebrick", lwd = 2)
+  }
+  for (n in nShow) {
+    m <- res$means[[as.character(n)]]
+    qqnorm(m, main = paste("QQ plot: n =", n), pch = 16, cex = 0.3)
+    qqline(m, col = "firebrick", lwd = 2)
+  }
+}
+
 cdfGap <- function(value, prob, mu, se, shift = 0) {
   F <- cumsum(prob)
   Fbefore <- c(0, head(F, -1))
   normalF <- pnorm(value + shift, mean = mu, sd = se)
   if (shift == 0) max(abs(F - normalF), abs(Fbefore - normalF)) else max(abs(F - normalF))
 }
+
 plotSE <- function(tab, label = "") {
   plot(tab$n, tab$simSD, log = "xy", pch = 16,
        xlab = "n (log scale)", ylab = "SD of sample means (log scale)",
        main = paste(label, ": simulated SD vs theoretical SE"),
-       ylim = range(c(tab$simSD, tab$theoSE)))
+       ylim = range(c(tab$simSD, tab$theoSE), na.rm = TRUE))
   lines(tab$n, tab$theoSE, col = "firebrick", lwd = 2)
   legend("topright", c("Simulated SD of means", "Theoretical SE"),
          pch = c(16, NA), lty = c(NA, 1), col = c("black", "firebrick"), lwd = c(NA, 2), bty = "n")
@@ -233,6 +254,12 @@ populations <- list(
     generator = function(n) rexp(n, rate = 1),
     mu = 1, sigma = 1, gamma1 = 2, gamma2 = 6,
     coarse = c(1, 2, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500)
+  ),
+  cauchy = list(
+    label = "Cauchy(0, 1)",
+    generator = function(n) rcauchy(n, location = 0, scale = 1),
+    mu = NA, sigma = NA, gamma1 = NA, gamma2 = NA,
+    coarse = c(1, 2, 5, 10, 30, 100, 300, 1000, 3000)
   )
 )
 
@@ -243,23 +270,40 @@ analyzePopulation <- function(pop, seed = student_id, reps = num) {
           reps = reps, seed = seed)
 }
 
-plotLattice <- function(res, nShow, mu, theoSE, label = "") {
-  old <- par(mfrow = c(2, length(nShow)), mar = c(4, 4, 3, 1))
-  on.exit(par(old))
-  for (n in nShow) {
-    m <- res$means[[as.character(n)]]
-    steps <- round((max(m) - min(m)) * n)
-    br <- min(m) - 1 / (2 * n) + (0:(steps + 1)) / n
-    h <- hist(m, breaks = br, plot = FALSE)
-    curveTop <- dnorm(mu, mean = mu, sd = theoSE(n))
-    hist(m, breaks = br, probability = TRUE, col = "gray75", border = if (n <= 10) "white" else NA,
-         ylim = c(0, max(h$density, curveTop)),
-         main = paste0(label, "\nn = ", n), xlab = "Sample mean")
-    curve(dnorm(x, mean = mu, sd = theoSE(n)), add = TRUE, col = "firebrick", lwd = 2)
+dependentMeans <- function(n, reps, baselineRate = 1, beta = 1.25, referenceTime = 1) {
+  x <- rexp(reps, rate = baselineRate)
+  total <- x
+  if (n >= 2) {
+    for (t in 2:n) {
+      rate <- baselineRate * exp(beta * (x - referenceTime))
+      x <- rexp(reps, rate = rate)
+      total <- total + x
+    }
   }
-  for (n in nShow) {
-    m <- res$means[[as.character(n)]]
-    qqnorm(m, main = paste("QQ plot: n =", n), pch = 16, cex = 0.3)
-    qqline(m, col = "firebrick", lwd = 2)
-  }
+  total / n
 }
+
+shotProbs <- function(n) seq(0.9, 0.5, length.out = n)
+
+basketballGenerator <- function(n) rbinom(n, size = 1, prob = shotProbs(n))
+
+basketballSE <- function(n) {
+  p <- shotProbs(n)
+  sqrt(sum(p * (1 - p))) / n
+}
+
+basketballPrediction <- function(n) {
+  p <- shotProbs(n)
+  v <- p * (1 - p)
+  c(skew = sum(v * (1 - 2 * p)) / sum(v)^1.5,
+    kurt = sum(v * (1 - 6 * v)) / sum(v)^2)
+}
+
+deathAge <- 0:100
+deathWeight <- 0.045 * exp(-deathAge / 5) + 0.030 * exp(-0.5 * ((deathAge - 65) / 10)^2)
+deathProb <- deathWeight / sum(deathWeight)
+rdeath <- function(n) sample(deathAge, size = n, replace = TRUE, prob = deathProb)
+deathMu <- sum(deathAge * deathProb)
+deathSigma <- sqrt(sum((deathAge - deathMu)^2 * deathProb))
+deathGamma1 <- sum((deathAge - deathMu)^3 * deathProb) / deathSigma^3
+deathGamma2 <- sum((deathAge - deathMu)^4 * deathProb) / deathSigma^4 - 3

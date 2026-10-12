@@ -1,0 +1,208 @@
+---
+title: "CLT Experiment 9"
+subtitle: "Reproducibility: What Changes With a Different Seed?"
+format:
+  html:
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+```
+
+# 1. The question
+
+Every other file uses one seed, the last four digits of my student ID (`r student_id`), and I never changed it because of the
+results. The project instructions ask for one experiment that reruns an analysis with a different seed and answers
+two questions:
+
+1. Did the exact results change?
+2. Did my scientific conclusion change?
+
+This is the only file where I change the seed. I reran four of my analyses: the die (02die.qmd), the exponential
+(03exponential.qmd), the binomial (04binomial.qmd) and the age at death mixture (08lifedeath.qmd). I chose these
+because they cover the different reasons an answer was decided (gaps, skewness, both, and a skewness close to the
+cutoff). I left out the Cauchy, because its answer ("no n") does not depend on a seed, and the two other extra credit
+processes to keep the run time short.
+
+I picked four extra seeds before running anything: 1, 42, 2026 and 9999. They have no special meaning; I only needed
+seeds that are different from mine.
+
+# 2. What did you expect?
+
+* Same seed twice: the random numbers in R are pseudo random. They come from a deterministic formula that starts
+  from the seed, so with the same seed the draws come out in the same order with the same values. I expected every
+  number and every plot to be identical, down to the last digit.
+* A different seed: every simulated number should change by Monte Carlo noise. For the skewness of 10,000 means this
+  noise is about sqrt(6 / 10,000) = `r round(sqrt(6 / num), 3)`, so a skewness whose true value is right at my cutoff of `r criteria$skew` would come
+  out between `r criteria$skew - round(sqrt(6 / num), 2)` and `r criteria$skew + round(sqrt(6 / num), 2)` about two thirds of the time, and almost always between `r criteria$skew - round(2 * sqrt(6 / num), 2)` and `r criteria$skew + round(2 * sqrt(6 / num), 2)`. I expected the chosen n to move by a few steps where the
+  curve crosses the cutoff, for example n = 100 for the exponential becoming something like 95 or 108.
+* Most change: the exponential. Its answer is decided by the skewness, which falls slowly and crosses the cutoff at a
+  shallow angle, so a small noise up or down moves the crossing point a lot to the left or right. I expected the age
+  at death mixture to move a lot for the same reason: it is also decided by the skewness, and although its ages are
+  whole numbers, its gaps are tiny (`r round(1 / deathSigma, 3)` SE even at n = 1).
+* Least change: the die. It is symmetric, so the skewness is not a problem; it fails only the QQ check, because of
+  the gaps between possible means. The size of these gaps, 1 / (sigma sqrt(n)) SE, is fixed by a formula and does
+  not depend on the random numbers, so the n at which the steps become small enough should barely change.
+* The conclusion should not change. Noise can move an answer like 100 a little, but it cannot pull it below 30: at
+  n = 30 the predicted skewness of the exponential is 2 / sqrt(30) = `r round(2 / sqrt(30), 2)`, about `r round((2 / sqrt(30) - criteria$skew) / sqrt(6 / num))` noise units above my cutoff.
+  So the main conclusion, that n = 30 is not a rule that works for every population, should hold for every seed.
+
+# 3. Same seed twice
+
+```{r}
+#| label: sameSeed
+first <- analyzePopulation(populations$exponential, seed = student_id)
+second <- analyzePopulation(populations$exponential, seed = student_id)
+identical(first$table, second$table)
+identical(first$means, second$means)
+```
+
+Running the exponential analysis twice with seed `r student_id` gave identical tables and identical sample means, down to the last
+digit. Anyone who downloads my repository and renders my files gets my exact numbers.
+
+# 4. Different seeds
+
+## The chosen n
+
+```{r}
+#| label: allSeeds
+seeds <- c(student_id, 1, 42, 2026, 9999)
+deathCoarse <- c(1, 2, 3, 5, 10, 15, 20, 30, 50, 100)
+runDeath <- function(s) {
+  searchN(rdeath, deathCoarse, mu = deathMu, theoSE = iidSE(deathSigma),
+          pred = iidPrediction(deathGamma1, deathGamma2), seed = s)
+}
+seedRuns <- lapply(seeds, function(s) {
+  list(die = analyzePopulation(populations$die, seed = s),
+       exponential = analyzePopulation(populations$exponential, seed = s),
+       binomial = analyzePopulation(populations$binomial, seed = s),
+       death = runDeath(s))
+})
+names(seedRuns) <- seeds
+popNames <- c("die", "exponential", "binomial", "death")
+chosen <- sapply(popNames, function(p) sapply(seedRuns, function(r) smallestN(r[[p]]$table)))
+chosenTable <- data.frame(seed = seeds, chosen, row.names = NULL)
+names(chosenTable) <- c("seed", "die (02)", "exponential (03)", "binomial (04)", "age at death (08)")
+knitr::kable(chosenTable)
+```
+
+```{r}
+#| label: chosenRange
+rangeTable <- data.frame(
+  population = c("die (02)", "exponential (03)", "binomial (04)", "age at death (08)"),
+  mySeed = chosen[1, ],
+  smallest = apply(chosen, 2, min),
+  largest = apply(chosen, 2, max),
+  prediction = c(5, predictedN(2), 52, predictedN(deathGamma1)),
+  row.names = NULL
+)
+knitr::kable(rangeTable)
+```
+
+The prediction column repeats the prediction from section 2 of each file (for the die, the kurtosis prediction; for the
+binomial, the gap prediction).
+
+## How much did the numbers change?
+
+For the exponential I compared the skewness of the sample means at the coarse grid values, which every seed ran.
+
+```{r}
+#| label: expCompare
+commonN <- populations$exponential$coarse
+expSkew <- sapply(seedRuns, function(r) {
+  t <- r$exponential$table
+  t$skew[match(commonN, t$n)]
+})
+expCompare <- data.frame(n = commonN, round(expSkew, 3), predicted = round(2 / sqrt(commonN), 3), row.names = NULL)
+names(expCompare)[2:6] <- paste("seed", seeds)
+knitr::kable(expCompare)
+spreadAcrossSeeds <- apply(expSkew, 1, sd)
+```
+
+At each n, the five seeds gave different skewness values, scattered around the prediction 2 / sqrt(n). From n = 50 on,
+the SD across the five seeds was between `r round(min(spreadAcrossSeeds[commonN >= 50]), 3)` and `r round(max(spreadAcrossSeeds[commonN >= 50]), 3)`, the same size as the Monte Carlo noise level of `r round(sqrt(6 / num), 3)` that I
+expected.
+
+```{r}
+#| label: seedPlot
+#| fig.width: 10
+#| fig.height: 5.5
+zoomN <- commonN[commonN >= 30 & commonN <= 300]
+plot(NULL, xlim = range(zoomN), ylim = c(0.05, 0.45), log = "x",
+     xlab = "Sample size n (log scale)", ylab = "Skewness of the sample means",
+     main = "Exponential: the same analysis with five seeds")
+nLine <- exp(seq(log(30), log(300), length.out = 200))
+lines(nLine, 2 / sqrt(nLine), lwd = 2)
+abline(h = criteria$skew, col = "firebrick", lty = 2, lwd = 2)
+seedCols <- c("black", "steelblue", "darkorange", "darkgreen", "purple")
+for (i in seq_along(seeds)) {
+  t <- seedRuns[[i]]$exponential$table
+  z <- t[t$n >= 30 & t$n <= 300, ]
+  points(z$n * (1 + (i - 3) * 0.015), z$skew, pch = 16, col = seedCols[i])
+}
+legend("topright", c("Prediction 2 / sqrt(n)", paste("Cutoff", criteria$skew), paste("seed", seeds)),
+       col = c("black", "firebrick", seedCols), lty = c(1, 2, rep(NA, 5)), lwd = c(2, 2, rep(NA, 5)),
+       pch = c(NA, NA, rep(16, 5)), bty = "n", cex = 0.85)
+```
+
+Each color is one seed, using all the n that seed ran, including its own finer grid. The points scatter around the
+same black line and cross the red cutoff in the same region, near n = 100, but not at exactly the same n.
+
+# 5. Did my conclusion change?
+
+```{r}
+#| label: at30
+thirty <- sapply(popNames, function(p) sapply(seedRuns, function(r) {
+  t <- r[[p]]$table
+  t$normalEnough[t$n == 30]
+}))
+thirtyTable <- data.frame(seed = seeds, thirty, row.names = NULL)
+names(thirtyTable) <- c("seed", "die (02)", "exponential (03)", "binomial (04)", "age at death (08)")
+knitr::kable(thirtyTable)
+```
+
+This table shows whether n = 30 passed my checks (TRUE) for each population and seed.
+
+* Die: n = 30 passed with every seed, and the answer stayed between `r rangeTable$smallest[1]` and `r rangeTable$largest[1]`. The conclusion "the die needs far fewer
+  than 30 rolls" did not change.
+* Exponential: n = 30 failed with every seed, and the answer ranged from `r rangeTable$smallest[2]` to `r rangeTable$largest[2]`. The conclusion "about 100, far more than 30"
+  did not change, but the exact number did, by tens of n.
+* Binomial: n = 30 failed with every seed, and the answer ranged from `r rangeTable$smallest[3]` to `r rangeTable$largest[3]`. The conclusion "the gaps push it to
+  about 70" did not change.
+* Age at death: the answer ranged from `r rangeTable$smallest[4]` to `r rangeTable$largest[4]`, and n = 30 passed with `r sum(thirty[, "death"])` of the `r length(seeds)` seeds. My seed gave the largest
+  answer. Here the conclusion depends on the seed: with most seeds this population is normal well before n = 30.
+
+With every seed the die was the fastest of the four, and the exponential and the binomial needed far more than 30.
+The order of those two was not fixed: the binomial needed more than the exponential with `r sum(chosen[, "binomial"] > chosen[, "exponential"])` of the `r length(seeds)` seeds and less
+with the others, so their answers (around 70 and around 100) are closer than one seed suggests. No seed produced a single
+n that works for all populations, so the main conclusion of the project, that there is no universal n, did not change.
+
+# 6. What this tells me about Monte Carlo simulation
+
+The same seed reproduces every number exactly, so my files are reproducible in the strict sense. A different seed
+changes every number, because a Monte Carlo result is an estimate with noise, not an exact value. How much that noise
+moves my final answer depends on how the true value approaches the cutoff:
+
+* When the true curve crosses the cutoff steeply, or a fixed property like the gaps decides, the answer barely moves
+  (die: `r rangeTable$smallest[1]` to `r rangeTable$largest[1]`).
+* When the true curve approaches the cutoff slowly, small noise moves the crossing point a lot (exponential:
+  `r rangeTable$smallest[2]` to `r rangeTable$largest[2]`; age at death: `r rangeTable$smallest[4]` to `r rangeTable$largest[4]`).
+
+I underestimated this. I expected the exponential to move by a few steps (95 to 108), but it moved from
+`r rangeTable$smallest[2]` to `r rangeTable$largest[2]`. Near n = 100 the predicted skewness 2 / sqrt(n) falls by only about `r round(100^-1.5, 3)` for each extra n, so a noise
+of `r round(sqrt(6 / num), 3)` can move the crossing point by about `r round(sqrt(6 / num) / 100^-1.5)` n. I could have calculated this before running.
+
+So the chosen n should be reported as an approximate value with its uncertainty, not as an exact number. For the age
+at death mixture my seed happened to give the high end of the range, which is the case 08lifedeath.qmd warned about.
+
+## Limitations
+
+* I only used five seeds. They show the range of answers, but not the full distribution of possible answers.
+* Each seed still resets the seed before every n, so within one seed the rows share a random stream, as in all my
+  other files.
+* I did not rerun the Cauchy, the dependent process or the basketball model.

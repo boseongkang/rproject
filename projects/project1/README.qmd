@@ -1,0 +1,178 @@
+---
+title: "How Fast Does Normal Happen?"
+subtitle: "Stress testing the Central Limit Theorem with Monte Carlo simulation in R"
+format: gfm
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+source("functions.R")
+```
+
+An R and Quarto project for Math 167R (CLT Project 1). For eight populations and processes I simulated
+`r format(num, big.mark = ",")` sample means for many sample sizes n, decided when the sampling distribution of the mean is "approximately
+normal" under one fixed standard, and compared the results with theory.
+
+Short answer: no, n = 30 is not a universal rule. Under my standard the answer ranged from n = 1 (normal
+population) to n = 364 (dependent machine failures), and for the Cauchy distribution no n works at all. What decides
+the answer is the skewness of the population, the gaps of a discrete population, and whether the CLT assumptions hold,
+not a single number.
+
+## Files
+
+| File | Population or experiment | CLT assumption tested |
+|:--|:--|:--|
+| `functions.R` | Settings (seed, number of repetitions, cutoffs), diagnostics, search, plots, populations | |
+| `01normal.qmd` | Standard normal (control) | none broken |
+| `02die.qmd` | Six sided die | none broken (discrete) |
+| `03exponential.qmd` | Exponential(1) | none broken (skewed) |
+| `04binomial.qmd` | Binomial(5, 0.1) | none broken (skewed and discrete) |
+| `05cauchy.qmd` | Cauchy(0, 1) | finite variance |
+| `06dependent.qmd` | Dependent machine failures (extra credit) | independence |
+| `07basketball.qmd` | Basketball shots with fatigue (extra credit) | identical distribution |
+| `08lifedeath.qmd` | Age at death mixture (extra credit) | none broken (two peaks) |
+| `09reproducibility.qmd` | Rerun of four analyses with other seeds | |
+| `experimentLog.md` | Every setting I changed, what I saw, and what I decided | |
+| `aiLog.md` | My AI prompts, follow ups, and how I checked the results | |
+
+To reproduce: open the folder in RStudio and render each `.qmd` file (Render button, or `quarto render` in the
+Terminal). Only base R and knitr are used. The seed is the last four digits of my student ID (`r student_id`), set in
+`functions.R` and reset before every experiment.
+
+## Method
+
+* For a population and a sample size n, I drew n values, took their mean, and repeated this `r format(num, big.mark = ",")` times. n is the
+  size of one sample; `r format(num, big.mark = ",")` is the number of repetitions.
+* My standard for "normal enough" (all three must hold): |skewness| ≤ `r criteria$skew`, |excess kurtosis| ≤ `r criteria$kurt`, and QQ correlation
+  ≥ `r criteria$qqCor` (the correlation between the sorted sample means and the normal quantiles, a one number summary of how
+  straight the QQ plot is). I chose and tested these cutoffs in 01normal.qmd and 03exponential.qmd.
+* The chosen n is the smallest tested n such that it and every larger tested n pass, so a single lucky row cannot
+  decide the answer.
+* I searched a coarse grid first, then added values between the last failing and the first passing n.
+* Separately, I checked whether the simulated SD of the means is within `r 100 * seTol` percent of the theoretical SE sigma / sqrt(n),
+  and I reported Shapiro Wilk p values without using them to decide.
+* For each population I wrote a prediction from formulas and compared it with the result. For 06 to 09 I wrote
+  the prediction after I had seen the results of a first version (see aiLog.md).
+
+## Final table
+
+```{r}
+#| label: runAll
+pops <- list(
+  normal = analyzePopulation(populations$normal),
+  die = analyzePopulation(populations$die),
+  exponential = analyzePopulation(populations$exponential),
+  binomial = analyzePopulation(populations$binomial),
+  cauchy = analyzePopulation(populations$cauchy),
+  dependent = searchN(NULL, c(1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000), mu = 1, theoSE = iidSE(1),
+                      pred = function(n) c(skew = NA, kurt = NA),
+                      meansFun = function(n, reps) dependentMeans(n, reps)),
+  basketball = searchN(basketballGenerator, c(2, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500),
+                       mu = 0.7, theoSE = basketballSE, pred = basketballPrediction),
+  death = searchN(rdeath, c(1, 2, 3, 5, 10, 15, 20, 30, 50, 100), mu = deathMu,
+                  theoSE = iidSE(deathSigma), pred = iidPrediction(deathGamma1, deathGamma2))
+)
+labels <- c(normal = "Standard normal", die = "Six sided die", exponential = "Exponential(1)",
+            binomial = "Binomial(5, 0.1)", cauchy = "Cauchy(0, 1)", dependent = "Dependent failures",
+            basketball = "Basketball with fatigue", death = "Age at death")
+decidedBy <- c(normal = "passes at every n", die = "QQ (gaps)", exponential = "skewness",
+               binomial = "QQ (gaps and skewness)", cauchy = "never passes", dependent = "skewness",
+               basketball = "QQ (gaps)", death = "skewness")
+keyObservation <- c(
+  normal = "Normal at every n: the control for the noise level of my checks",
+  die = "Symmetric, so the skewness is 0; the gaps of 1 / n between possible means decide",
+  exponential = "Skewness 2 / sqrt(n) predicted the answer; n = 30 still clearly right skewed",
+  binomial = "Skewed and discrete; the gaps push the answer from 36 (skewness) to 70",
+  cauchy = "The mean of n Cauchy values is Cauchy again; the IQR stays 2 at every n. The median works from n = 50",
+  dependent = "Shape becomes normal, but centered near 1.68 instead of 1 with an SE 2.2 times the naive one",
+  basketball = "Not identically distributed, but behaves like constant p = 0.7; exact SE 3 percent below the naive SE",
+  death = "Two peaks, but mild skewness; the answer is very sensitive to the seed (15 to 45 in 09reproducibility)"
+)
+finalTable <- do.call(rbind, lapply(names(pops), function(k) {
+  tab <- pops[[k]]$table
+  nStar <- smallestN(tab)
+  row <- if (is.na(nStar)) tab[nrow(tab), ] else tab[tab$n == nStar, ]
+  at30 <- tab[tab$n == 30, ]
+  data.frame(
+    Population = labels[[k]],
+    `Smallest n judged normal` = ifelse(is.na(nStar), "none", as.character(nStar)),
+    `Decided by` = decidedBy[[k]],
+    `Skewness at n` = ifelse(is.na(nStar), "undefined", format(round(row$skew, 3), nsmall = 3)),
+    `Excess kurtosis at n` = ifelse(is.na(nStar), "undefined", format(round(row$exKurt, 3), nsmall = 3)),
+    `QQ correlation at n` = round(row$qqCor, 4),
+    `Normal enough at n = 30` = ifelse(nrow(at30) == 0, "not tested", ifelse(at30$normalEnough, "yes", "no")),
+    `Key observation` = keyObservation[[k]],
+    check.names = FALSE
+  )
+}))
+knitr::kable(finalTable, row.names = FALSE)
+```
+
+For the Cauchy, the skewness and kurtosis are undefined and the QQ correlation shown is the one at the largest tested
+n (3,000). For the dependent process, "normal" refers to the shape only; the naive mean and SE are wrong at every n.
+For the basketball model n is the number of shots in a game.
+
+## Is the number 30?
+
+No. Under my standard n = 30 was enough for `r sum(finalTable[["Normal enough at n = 30"]] == "yes")` of the `r nrow(finalTable)` populations: `r paste(finalTable$Population[finalTable[["Normal enough at n = 30"]] == "yes"], collapse = " and ")`. For the
+exponential, the binomial, the dependent process and the basketball model it was clearly not enough, for the age at
+death mixture it failed by less than the noise with my seed (and passed with all four other seeds in
+09reproducibility.qmd), and for the Cauchy no n is enough. The rule of thumb is too generous for skewed or discrete
+populations and more than needed for symmetric ones like the die.
+
+The reproducibility experiment also showed that the exact chosen n is uncertain: with five seeds the exponential
+ranged from 73 to 132 and the binomial from 68 to 77. The main conclusions held for every seed.
+
+## Which populations converged fastest and slowest, and why?
+
+Fastest: the normal (n = 1, nothing to fix), the die (small gaps, no skewness) and the age at death mixture (two peaks,
+but mild skewness). Slowest among the five required populations, leaving out the Cauchy: the exponential (skewness 2)
+and the binomial (skewness 1.19 plus large gaps). Among the extra credit models the basketball model (118, because of
+its gaps) was slower than both, and the dependent process (364) was the slowest of all.
+
+Two rules explained almost every answer:
+
+1. Skewness. For independent draws the skewness of the mean is gamma1 / sqrt(n), so my cutoff of 0.2 needs about
+   (gamma1 / 0.2)² draws. This predicted the exponential (100 predicted, 100 found) and gave the right order of
+   magnitude elsewhere.
+2. Gaps. For a discrete population the mean moves in steps of 1 / n, which is 1 / (sigma × sqrt(n)) standard errors.
+   The QQ check passed when this step fell to about 0.2 SE. This rule predicted the basketball model (119 predicted,
+   118 found) and Binomial(5, 0.5) in a side experiment (19 predicted, 19 found). When a population is both skewed and
+   discrete (Binomial(5, 0.1)), the two effects add up and the answer is larger than either rule alone.
+
+The number of peaks did not matter: the two peaked age at death distribution was one of the fastest.
+
+## What happened when the assumptions failed?
+
+Dependent observations (06). The shape still became normal (at n = 364), but the center settled near 1.68 instead
+of the naive 1, and the SD of the means was about 2.2 times the naive SE. A naive 95 percent interval would contain the
+long run mean only about 63 percent of the time, at every n. The shape checks alone would never have shown this.
+
+Not identically distributed observations (07). Almost nothing changed. The shooting percentage with fatigue became
+normal at nearly the same n as with a constant p = 0.7, and the exact mean and SE formulas for independent but
+non identical shots worked at every n.
+
+Extremely heavy tails (05). The CLT failed completely. The mean of n Cauchy values has the same distribution as one
+value, so the spread never shrank, even at n = 3,000. The sample median, which ignores the tails, became normal at
+n = 50.
+
+So the assumption that mattered most for the shape was the finite variance, and the one that mattered most for the
+formulas was independence.
+
+## Limitations
+
+* Every answer depends on my cutoffs; for example, a QQ cutoff of 0.995 instead of 0.998 changes the die from 8 to 5
+  and the binomial from 70 to 35.
+* The chosen n is uncertain by several n (by tens of n for the exponential), as 09reproducibility.qmd shows.
+* My QQ check counts the gaps of discrete populations. With a continuity correction, the normal approximation for the
+  die and the binomial is good at smaller n than my answers.
+* Within one seed all rows reuse one random stream, so they are not independent checks.
+
+## Use of AI
+
+I used Claude throughout the project. `aiLog.md` records my prompts, what I checked, and what I corrected, and
+`experimentLog.md` records every setting I changed myself and what I decided.
